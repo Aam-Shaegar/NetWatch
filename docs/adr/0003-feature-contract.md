@@ -1,0 +1,2 @@
+# ADR 0003 — Contracts before models
+Accepted 2026-11-06. JSON Schema 2020-12 plus semantic checks in both languages. Nanosecond timestamps are decimal strings to avoid JS precision loss. Missing features are null, capture drops can be unknown. Host and destination-service scopes are distinct. traffic-v1 freezes an initial subset; model training waits for independently verified extraction. Later additions require feature version change and model compatibility checks.

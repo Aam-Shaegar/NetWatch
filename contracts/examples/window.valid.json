@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "feature_set_version": "traffic-v1",
+  "event_id": "fixture-window-1",
+  "sensor_id": "test",
+  "capture_epoch": "fixture",
+  "entity_type": "host",
+  "entity_id": "192.0.2.10",
+  "window_start_ns": "1700000000000000000",
+  "window_end_ns": "1700000005000000000",
+  "features": {
+    "in_packets": 0,
+    "out_packets": 2,
+    "in_ip_bytes": 0,
+    "out_ip_bytes": 80,
+    "unique_peers": 1,
+    "unique_destination_ports": 1,
+    "active_flows": 1,
+    "new_tcp_attempts": 1,
+    "established_tcp_attempts": 0,
+    "syn_fraction": 1,
+    "rst_fraction": 0,
+    "mean_packet_size": 40,
+    "std_packet_size": 0,
+    "mean_interarrival_seconds": 1,
+    "std_interarrival_seconds": 0,
+    "completed_flow_count": 0
+  },
+  "quality": {
+    "coverage": "complete",
+    "capture_dropped": null,
+    "late_packets": 0,
+    "state_evictions": 0
+  }
+}

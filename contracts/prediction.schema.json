@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "model_id",
+    "feature_set_version",
+    "status",
+    "score",
+    "threshold"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "model_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "feature_set_version": {
+      "const": "traffic-v1"
+    },
+    "status": {
+      "enum": [
+        "normal",
+        "anomalous",
+        "warming_up",
+        "insufficient_data",
+        "degraded",
+        "error"
+      ]
+    },
+    "score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "threshold": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    }
+  }
+}

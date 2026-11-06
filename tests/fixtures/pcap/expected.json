@@ -1,0 +1,34 @@
+{
+  "purpose": "decoder fixtures, not training data",
+  "mixed": {
+    "record_count": 5,
+    "ipv4": 4,
+    "ipv6": 1,
+    "tcp": 2,
+    "udp": 2,
+    "icmp": 1,
+    "vlan": 1,
+    "first_two_tcp_ip_lengths": [
+      40,
+      40
+    ],
+    "first_two_tcp_unique_flows": 1,
+    "first_two_tcp_new_attempts": 1,
+    "timestamps_seconds": [
+      1700000000,
+      1700000001,
+      1700000002,
+      1700000003,
+      1700000004
+    ]
+  },
+  "sha256": {
+    "fragment.pcap": "17bdb69916c6980dbb9ce4c0ea39612510f8865fb23ef5344dce2d006d7d5788",
+    "malformed.pcap": "741704bb2756dcd9eedc6360b106f1e4972b737fe7c9022ee83aa645b86faf38",
+    "mixed.pcap": "bb9749bd4948a26d2b96ed422202db3e17b92e87b04e416150270a6f76fa8f8c",
+    "mixed.pcapng": "f6a142a2c291e359e20ce5ca11c2fa8cced2a28316876d2ec5c3a6a8ca9080c4",
+    "syn-retry.pcap": "14ae3fee39bd2090ea2b5a82c98ebcf4041e38c6742c848a5c16af2fd2efdb80",
+    "truncated.pcap": "80bbc15949ab4ed550546f2b4965d41c1972e161277fd0d038da2abad0d38568",
+    "unsupported-linktype.pcap": "e0e53fec710cefc7e9db51f623e0fe0cc75b48a91f3b55167e221db1bb62ad7b"
+  }
+}

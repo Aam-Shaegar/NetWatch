@@ -1,0 +1,18 @@
+name: netwatch-dev
+services:
+  db:
+    image: postgres:17.7-alpine
+    environment:
+      POSTGRES_DB: netwatch
+      POSTGRES_USER: netwatch
+      POSTGRES_PASSWORD: ${NETWATCH_DB_PASSWORD:?Run make configure first}
+    ports: ["127.0.0.1:54329:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netwatch -d netwatch"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  pgdata:

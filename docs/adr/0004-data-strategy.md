@@ -1,0 +1,2 @@
+# ADR 0004 — Local normal data plus public attack benchmarks
+Accepted 2026-11-06. GRU initially learns normal behavior from our own controlled lab. Public CIC PCAP is a supplementary benchmark and classifier candidate, not a compatible ready-made feature table. No random row split; assign complete capture/run groups. No training on tiny contract fixtures. No claim of external dataset acquisition until actual archives and checksums exist. Download forms need user-provided information; bootstrap never submits personal details.

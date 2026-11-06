@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "run_id": "iot23-somfy-01",
+  "source": "https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/CTU-Honeypot-Capture-7-1/Somfy-01/2019-07-03-15-15-47-first_start_somfy_gateway.pcap",
+  "file_name": "somfy01.pcap",
+  "bytes": 2094105,
+  "sha256": "0ec756ff0e26fc6c7d985178a35206bd7bc5b8a33cc5c7a23d6bb0b103db2a2a",
+  "labels_status": "not_verified",
+  "training_ready": false,
+  "group_id": "iot23-somfy-01",
+  "record_count": 8276,
+  "capture_span_seconds": 5087.822
+}

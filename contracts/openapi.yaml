@@ -1,0 +1,13 @@
+openapi: 3.1.0
+info:
+  title: NetWatch foundation API
+  version: 0.2.0
+paths:
+  /health/live:
+    get:
+      responses:
+        '200': {description: Process is alive}
+  /health/ready:
+    get:
+      responses:
+        '503': {description: Foundation only; ingestion and models unavailable}

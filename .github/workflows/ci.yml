@@ -1,0 +1,19 @@
+name: foundation
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version-file: go.mod}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm, cache-dependency-path: web/package-lock.json}
+      - uses: astral-sh/setup-uv@v6
+        with: {version: '0.13.7', python-version: '3.14'}
+      - run: make bootstrap
+      - run: test -z "$(gofmt -l cmd internal contracts/*.go)"
+      - run: make test build compose-check
+      - run: uv run --project ml --locked python scripts/check_fixtures.py

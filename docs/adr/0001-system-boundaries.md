@@ -1,0 +1,2 @@
+# ADR 0001 — Go data plane, Python ML
+Accepted 2026-11-06. Go owns all packet-to-window semantics. Offline and live reuse the same extractor. Python never reconstructs packet features; it validates and transforms versioned windows. HTTP JSON batches, PostgreSQL jobs, no Kafka at this scale. Existing Python prototype remains legacy. Model training and inference are separate processes. Consequence: contracts and cross-language fixtures are mandatory.

@@ -1,0 +1,46 @@
+name: netwatch-lab
+services:
+  target:
+    image: netwatch-lab:dev
+    pull_policy: never
+    build: {context: ../.., dockerfile: deploy/lab/Dockerfile}
+    command: ["python", "/lab/target.py"]
+    networks: [lab_data]
+    cap_drop: [ALL]
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/',timeout=1)"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+  recorder:
+    image: netwatch-lab:dev
+    pull_policy: never
+    network_mode: "service:target"
+    depends_on:
+      target: {condition: service_healthy}
+    command: ["tcpdump", "-i", "eth0", "-nn", "-U", "-s", "0", "-Z", "root", "-w", "/output/traffic.pcap", "tcp port 8080"]
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    read_only: true
+    volumes: ["${NETWATCH_RUN_DIR:-../../data/runs/current}:/output"]
+    stop_signal: SIGINT
+    mem_limit: 128m
+    pids_limit: 64
+  client:
+    image: netwatch-lab:dev
+    pull_policy: never
+    command: ["python", "/lab/client.py"]
+    profiles: [scenario]
+    networks: [lab_data]
+    environment: {RATE: "${RATE:-5}", DURATION: "${DURATION:-10}", SEED: "${SEED:-42}", PROFILE: "${PROFILE:-stable}"}
+    volumes: ["${NETWATCH_RUN_DIR:-../../data/runs/current}:/output"]
+    cap_drop: [ALL]
+    read_only: true
+    mem_limit: 128m
+    pids_limit: 64
+networks:
+  lab_data:
+    internal: true

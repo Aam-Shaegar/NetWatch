@@ -1,0 +1,13 @@
+{
+  "status": "planned_not_trained",
+  "feature_set_version": "traffic-v1",
+  "history_windows": 12,
+  "hidden_size": 64,
+  "layers": 1,
+  "batch_size": 128,
+  "learning_rate": 0.001,
+  "max_epochs": 50,
+  "early_stopping_patience": 5,
+  "seed": 42,
+  "device": "cpu"
+}

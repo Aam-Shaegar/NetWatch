@@ -1,0 +1,2 @@
+# ADR 0002 — Linux target-side observation
+Accepted 2026-11-06. Initial lab observes target namespace with a capture sidecar. Joining a bridge alone does not grant network-wide visibility. macOS uses Docker Linux VM; host sniffing is not part of bootstrap. Benign bounded HTTP traffic is the first scenario. API/ML liveness can succeed while readiness remains 503. The preparation lab uses tcpdump as an independent reference capture, not as an implemented Go sensor.

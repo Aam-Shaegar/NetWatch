@@ -1,0 +1,11 @@
+{
+  "sensor_id": "lab-target",
+  "mode": "offline",
+  "window_seconds": 5,
+  "allowed_lateness_seconds": 1,
+  "max_flows": 100000,
+  "tcp_idle_seconds": 60,
+  "udp_idle_seconds": 30,
+  "max_spool_bytes": 268435456,
+  "capture_payload": false
+}

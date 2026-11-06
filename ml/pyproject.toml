@@ -1,0 +1,22 @@
+[project]
+name = "netwatch-ml"
+version = "0.2.0"
+requires-python = ">=3.12,<3.15"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1", "jsonschema>=4.23,<5", "numpy>=2,<3", "scikit-learn>=1.6,<2", "torch>=2.6,<3", "pyarrow>=19,<30"]
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "scapy>=2.6,<3", "pyyaml>=6,<7"]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "event_id": "fixture-window-1",
+  "model_id": "not-loaded",
+  "feature_set_version": "traffic-v1",
+  "status": "insufficient_data",
+  "score": null,
+  "threshold": null
+}
