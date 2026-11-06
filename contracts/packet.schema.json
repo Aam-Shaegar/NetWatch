@@ -76,6 +76,31 @@
         "fragment",
         "malformed"
       ]
+    },
+    "captured_length": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "wire_length": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "tcp_flags": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "tcp_seq": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "tcp_ack": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
     }
   }
 }
