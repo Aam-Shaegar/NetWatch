@@ -44,3 +44,19 @@ func TestEndpointZeroPortAndInvalidIP(t *testing.T) {
 		t.Fatalf("accepted missing address: %v", got)
 	}
 }
+
+func TestOrderedEndpoints(t *testing.T) {
+	for _, pair := range [][2]string{
+		{"192.0.2.10:50000", "198.51.100.20:443"},
+		{"[2001:db8::1]:80", "[2001:db8::1]:443"},
+		{"192.0.2.1:0", "192.0.2.1:0"},
+	} {
+		low, high := netip.MustParseAddrPort(pair[0]), netip.MustParseAddrPort(pair[1])
+		for _, input := range [][2]netip.AddrPort{{low, high}, {high, low}} {
+			a, b := flow.OrderedEndpoints(input[0], input[1])
+			if a != low || b != high {
+				t.Fatalf("order %v: got (%v, %v), want (%v, %v)", input, a, b, low, high)
+			}
+		}
+	}
+}

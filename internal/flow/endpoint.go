@@ -15,3 +15,11 @@ func Endpoint(ip string, port *uint16) (netip.AddrPort, bool) {
 	}
 	return netip.AddrPortFrom(addr, *port), true
 }
+
+// OrderedEndpoints returns the pair in address, then port order.
+func OrderedEndpoints(a, b netip.AddrPort) (netip.AddrPort, netip.AddrPort) {
+	if a.Compare(b) > 0 {
+		return b, a
+	}
+	return a, b
+}
