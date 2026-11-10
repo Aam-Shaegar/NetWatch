@@ -27,3 +27,13 @@ bin/
 local-coursework/
 docs/artifact.md
 docs/archive/
+
+# Local development notes
+AGENTS.md
+/PLAN.md
+/docs/IMPLEMENTATION_GUIDE.md
+/docs/status.md
+/docs/runbooks/release-checklist.md
+PROJECT_MEMORY.md
+NetWatch-чек-лист.md
+NetWatch-построчный-разбор.md

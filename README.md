@@ -15,9 +15,6 @@ make compose-check
 Нужны Go 1.25+, Python 3.14, Node 22.12+ и Docker Compose.
 Подробности: [рабочее окружение](docs/runbooks/development.md).
 
-- [Главная инструкция](docs/IMPLEMENTATION_GUIDE.md)
-- [Статусы этапов](PLAN.md)
-- [Проверки текущей подготовки](docs/status.md)
 - [Стратегия и получение данных](docs/runbooks/data.md)
 - [Контракты признаков](contracts/features.md)
 

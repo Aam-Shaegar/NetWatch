@@ -9,8 +9,7 @@ Both health/live return 200, health/ready return 503: ingestion and trained mode
 `make lab-smoke` builds an isolated benign HTTP test and records traffic under a unique directory in data/runs/.
 Each run creates a separate Compose project and terminates its containers on exit.
 `make lab-down` stops owned lab containers. No host interface capture occurs in bootstrap.
-Raw data, .env and models are ignored. Actual preparation checks are in docs/status.md.
-Next task: implement Go offline capture/decode using tests/fixtures/pcap and contract tests.
+Raw data, .env and models are ignored.
 
 When uv is absent, bootstrap installs pinned uv in .tools/uv; scripts/uv is the portable wrapper.
 
