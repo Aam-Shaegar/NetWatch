@@ -13,6 +13,11 @@ frames=[a/IP(src='192.0.2.10',dst='198.51.100.20')/TCP(sport=50000,dport=443,fla
 for i,p in enumerate(frames):p.time=1700000000+i
 wrpcap(str(R/'mixed.pcap'),frames)
 wrpcap(str(R/'syn-retry.pcap'),frames[:2])
+# Request, reverse TCP reply and UDP using exactly the same endpoints.
+reply = Ether(src=a.dst, dst=a.src)/IP(src='198.51.100.20', dst='192.0.2.10')/TCP(sport=443, dport=50000, flags='SA', seq=19, ack=1)
+udp = a/IP(src='192.0.2.10', dst='198.51.100.20')/UDP(sport=50000, dport=443)
+reply.time, udp.time = frames[0].time + 1, frames[0].time + 2
+wrpcap(str(R/'flow-directions.pcap'), [frames[0], reply, udp])
 with PcapNgWriter(str(R/'mixed.pcapng')) as out:
     for p in frames:out.write(p)
 # Truncated IPv4 capture: wire length exceeds captured record bytes.

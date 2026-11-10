@@ -23,6 +23,7 @@
     ]
   },
   "sha256": {
+    "flow-directions.pcap": "b7f9185def7011da649a55a6346e58c4e1f1690d4defd73c257eee74a46dc899",
     "fragment.pcap": "17bdb69916c6980dbb9ce4c0ea39612510f8865fb23ef5344dce2d006d7d5788",
     "malformed.pcap": "741704bb2756dcd9eedc6360b106f1e4972b737fe7c9022ee83aa645b86faf38",
     "mixed.pcap": "bb9749bd4948a26d2b96ed422202db3e17b92e87b04e416150270a6f76fa8f8c",

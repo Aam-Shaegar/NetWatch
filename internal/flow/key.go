@@ -13,14 +13,19 @@ type Key struct {
 }
 
 func KeyFromPacket(p decode.Meta) (Key, bool) {
+	key, _, ok := packetKey(p)
+	return key, ok
+}
+
+func packetKey(p decode.Meta) (Key, bool, bool) {
 	if p.Status != "decoded" || (p.Protocol != "TCP" && p.Protocol != "UDP") {
-		return Key{}, false
+		return Key{}, false, false
 	}
 	src, srcOK := Endpoint(p.Src, p.SrcPort)
 	dst, dstOK := Endpoint(p.Dst, p.DstPort)
 	if !srcOK || !dstOK {
-		return Key{}, false
+		return Key{}, false, false
 	}
 	low, high := OrderedEndpoints(src, dst)
-	return Key{protocol: p.Protocol, low: low, high: high}, true
+	return Key{protocol: p.Protocol, low: low, high: high}, src == low, true
 }
