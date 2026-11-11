@@ -145,3 +145,34 @@ func (t *Tracker) Observe(p decode.Meta) (state *State, repeated bool) {
 	}
 	return state, false
 }
+
+// Changes describes events observed in this packet, including a new incarnation.
+type Changes struct {
+	Attempts, Established, Completed uint64
+}
+
+func (t *Tracker) ObserveChanges(p decode.Meta) (state *State, changes Changes) {
+	key, ok := KeyFromPacket(p)
+	if !ok {
+		return nil, changes
+	}
+	previous := t.flows[key]
+	var attempts, established uint64
+	var closed string
+	if previous != nil {
+		attempts, established, closed = previous.Attempts, previous.Established, previous.ClosedBy
+	}
+	state, _ = t.Observe(p)
+	if state == nil {
+		return nil, changes
+	}
+	if state != previous {
+		attempts, established, closed = 0, 0, ""
+	}
+	changes.Attempts = state.Attempts - attempts
+	changes.Established = state.Established - established
+	if closed == "" && state.ClosedBy != "" {
+		changes.Completed = 1
+	}
+	return state, changes
+}

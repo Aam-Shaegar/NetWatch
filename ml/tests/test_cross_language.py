@@ -15,3 +15,17 @@ def test_replay_packet_contract(tmp_path):
     assert len(packets) == 2
     assert sum(p['ip_length'] for p in packets) == 80
     assert all(p['tcp_flags'] == 2 for p in packets)
+
+
+def test_replay_window_contract(tmp_path):
+    out = tmp_path / 'windows.jsonl'
+    subprocess.run([
+        'go', 'run', './cmd/netwatch-sensor', 'replay',
+        '--input', 'tests/fixtures/pcap/syn-retry.pcap',
+        '--output', str(out), '--host', '192.0.2.10', '--epoch', 'cross-language',
+    ], cwd=ROOT, check=True)
+    rows = [validate('window', json.loads(line)) for line in out.read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]['features']['new_tcp_attempts'] == 1
+    assert rows[0]['features']['out_ip_bytes'] == 80
+    assert rows[0]['quality']['coverage'] == 'partial'

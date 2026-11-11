@@ -1,6 +1,6 @@
 # Feature contract traffic-v1 — initial subset
 
-Schema is fixed for preparation; implementation of aggregation is next milestone.
+Go window aggregation emits this schema through sensor replay with --host or --service.
 Entity host: in = destination is host, out = source is host. destination_service:
 in = client to configured service, out = response. TCP/UDP ports absent → null in PacketMeta.
 Window is [start,end), 5 seconds by default. JSON times are decimal int64 ns strings.

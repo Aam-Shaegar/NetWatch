@@ -18,12 +18,13 @@ import (
 const width = int64(5 * time.Second)
 
 type Config struct {
-	Host       netip.Addr
-	Service    netip.AddrPort
-	Protocol   string
-	Lateness   time.Duration
-	MaxUnique  int
-	MaxPending int
+	Host                       netip.Addr
+	Service                    netip.AddrPort
+	Protocol                   string
+	Lateness                   time.Duration
+	MaxUnique                  int
+	MaxPending                 int
+	CoverageStart, CoverageEnd *int64
 }
 
 // Count is exact unless its set exceeded the configured limit.
@@ -33,11 +34,17 @@ type Count struct {
 }
 
 type Result struct {
-	Start, End                           int64
-	InPackets, OutPackets                uint64
-	InBytes, OutBytes                    uint64
-	Peers, DestinationPorts, ActiveFlows Count
-	NewTCPAttempts                       uint64
+	Start, End                             int64
+	InPackets, OutPackets                  uint64
+	InBytes, OutBytes                      uint64
+	Peers, DestinationPorts, ActiveFlows   Count
+	NewTCPAttempts                         uint64
+	EstablishedTCPAttempts, CompletedFlows uint64
+	SYNFraction, RSTFraction               *float64
+	MeanPacketSize, StdPacketSize          *float64
+	MeanInterarrival, StdInterarrival      *float64
+	Coverage                               string
+	LatePackets, StateEvictions            uint64
 }
 
 type distinct[T comparable] struct {
@@ -69,9 +76,13 @@ func (d *distinct[T]) count() Count {
 
 type accumulator struct {
 	Result
-	peers distinct[netip.Addr]
-	ports distinct[uint16]
-	flows distinct[flow.Key]
+	peers            distinct[netip.Addr]
+	ports            distinct[uint16]
+	flows            distinct[flow.Key]
+	sizes, intervals moments
+	lastPacket       int64
+	tcp, syn, rst    uint64
+	gap              bool
 }
 
 type event struct {
@@ -110,6 +121,7 @@ type Engine struct {
 	watermark   int64
 	LatePackets uint64
 	finished    bool
+	restarted   bool
 }
 
 func New(c Config) (*Engine, error) {
@@ -118,6 +130,16 @@ func New(c Config) (*Engine, error) {
 	}
 	if c.Service.IsValid() && c.Protocol != "TCP" && c.Protocol != "UDP" {
 		return nil, fmt.Errorf("service requires TCP or UDP")
+	}
+	if (c.CoverageStart == nil) != (c.CoverageEnd == nil) {
+		return nil, fmt.Errorf("coverage needs both bounds")
+	}
+	if c.CoverageStart != nil {
+		start, end := *c.CoverageStart, *c.CoverageEnd
+		if start < 0 || end <= start {
+			return nil, fmt.Errorf("invalid coverage interval")
+		}
+		c.CoverageStart, c.CoverageEnd = &start, &end
 	}
 	return &Engine{config: c, windows: make(map[int64]*accumulator)}, nil
 }
@@ -130,6 +152,9 @@ func (e *Engine) Push(p decode.Meta) ([]Result, error) {
 	at, err := strconv.ParseInt(p.Timestamp, 10, 64)
 	if err != nil || at < 0 || at > math.MaxInt64-width {
 		return nil, fmt.Errorf("unsupported packet timestamp")
+	}
+	if e.config.CoverageStart != nil && (at < *e.config.CoverageStart || at >= *e.config.CoverageEnd) {
+		return nil, fmt.Errorf("packet outside declared coverage")
 	}
 	if p.IPLength < 0 {
 		return nil, fmt.Errorf("negative IP length")
@@ -189,6 +214,17 @@ func (e *Engine) drain(all bool) []Result {
 	for _, start := range starts {
 		w := e.windows[start]
 		w.Peers, w.DestinationPorts, w.ActiveFlows = w.peers.count(), w.ports.count(), w.flows.count()
+		w.MeanPacketSize, w.StdPacketSize = w.sizes.values()
+		w.MeanInterarrival, w.StdInterarrival = w.intervals.values()
+		w.SYNFraction, w.RSTFraction = fraction(w.syn, w.tcp), fraction(w.rst, w.tcp)
+		w.Coverage = "partial"
+		if e.config.CoverageStart != nil && w.Start >= *e.config.CoverageStart && w.End <= *e.config.CoverageEnd {
+			w.Coverage = "complete"
+		}
+		w.LatePackets = e.LatePackets
+		if w.gap || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
+			w.Coverage = "gap"
+		}
 		out = append(out, w.Result)
 		delete(e.windows, start)
 	}
@@ -199,14 +235,19 @@ func (e *Engine) accumulate(ev event) {
 	e.tracker.Advance(ev.at)
 	p := ev.p
 	if p.Status != "decoded" {
+		if p.Status != "non_ip" {
+			e.bucket(ev.at).gap = true
+		}
 		return
 	}
 	src, err := netip.ParseAddr(p.Src)
 	if err != nil {
+		e.bucket(ev.at).gap = true
 		return
 	}
 	dst, err := netip.ParseAddr(p.Dst)
 	if err != nil {
+		e.bucket(ev.at).gap = true
 		return
 	}
 	in, out := dst == e.config.Host, src == e.config.Host
@@ -219,11 +260,22 @@ func (e *Engine) accumulate(ev event) {
 	if !in && !out {
 		return
 	}
-	start := ev.at / width * width
-	w := e.windows[start]
-	if w == nil {
-		w = &accumulator{Result: Result{Start: start, End: start + width}}
-		e.windows[start] = w
+	w := e.bucket(ev.at)
+	if w.sizes.n > 0 {
+		w.intervals.add(float64(ev.at-w.lastPacket) / float64(time.Second))
+	}
+	w.lastPacket = ev.at
+	w.sizes.add(float64(p.IPLength))
+	if p.Protocol == "TCP" {
+		w.tcp++
+		if p.TCPFlags != nil {
+			if *p.TCPFlags&2 != 0 {
+				w.syn++
+			}
+			if *p.TCPFlags&4 != 0 {
+				w.rst++
+			}
+		}
 	}
 	if in {
 		w.InPackets++
@@ -245,9 +297,37 @@ func (e *Engine) accumulate(ev event) {
 		return
 	}
 	w.flows.add(key, e.config.MaxUnique)
-	state, retry := e.tracker.Observe(p)
-	const fin, syn, rst, ack = 1, 2, 4, 16
-	if state != nil && !retry && p.Protocol == "TCP" && p.TCPFlags != nil && *p.TCPFlags&(fin|syn|rst|ack) == syn && p.TCPSeq != nil {
-		w.NewTCPAttempts++
+	before := e.tracker.StateEvictions
+	_, changes := e.tracker.ObserveChanges(p)
+	w.NewTCPAttempts += changes.Attempts
+	w.EstablishedTCPAttempts += changes.Established
+	w.CompletedFlows += changes.Completed
+	w.StateEvictions += e.tracker.StateEvictions - before
+}
+
+// Restart ends the current observation epoch and discards connection history.
+// Callers must use a new capture_epoch when serializing subsequent results.
+func (e *Engine) Restart() []Result {
+	out := e.drain(true)
+	for i := range out {
+		out[i].Coverage = "gap"
 	}
+	e.tracker = flow.Tracker{}
+	e.config.CoverageStart, e.config.CoverageEnd = nil, nil
+	e.LatePackets = 0
+	e.restarted = true
+	e.finished = false
+	return out
+}
+
+// bucket also permits quality-only windows when a damaged packet has no addresses.
+func (e *Engine) bucket(at int64) *accumulator {
+	start := at / width * width
+	w := e.windows[start]
+	if w == nil {
+		w = &accumulator{Result: Result{Start: start, End: start + width}, gap: e.restarted}
+		e.restarted = false
+		e.windows[start] = w
+	}
+	return w
 }
