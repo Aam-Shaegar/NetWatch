@@ -92,9 +92,16 @@ def main():
              '-v', f'{output}:/output', 'netwatch-sensor:dev', 'replay',
              '--input', '/output/live.pcap', '--output', '/output/offline.jsonl',
              '--service', env['NETWATCH_SERVICE'], '--epoch', started['epoch']])
-        live = [json.loads(s) for s in (output / 'live.jsonl').read_text().splitlines()]
-        offline = {w['window_start_ns']: w for w in
-                   map(json.loads, (output / 'offline.jsonl').read_text().splitlines())}
+        # Native Linux preserves UID 0 and mode 0600 of sensor output. Read it
+        # through a read-only mount, without making packet artifacts world-readable.
+        def windows(name):
+            content = run(['docker', 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
+                           '--read-only', '-v', f'{output}:/output:ro', '--entrypoint', '/bin/cat',
+                           'netwatch-sensor:dev', f'/output/{name}']).stdout
+            return [json.loads(line) for line in content.splitlines()]
+
+        live = windows('live.jsonl')
+        offline = {w['window_start_ns']: w for w in windows('offline.jsonl')}
         complete = [w for w in live if w['quality']['coverage'] == 'complete']
         assert len(complete) >= 2, live
         for w in complete:
