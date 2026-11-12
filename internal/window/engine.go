@@ -331,3 +331,15 @@ func (e *Engine) bucket(at int64) *accumulator {
 	}
 	return w
 }
+
+// Advance closes windows during live silence once buffered packets are drained.
+// Call only after a capture read timeout, using the capture clock domain.
+func (e *Engine) Advance(at int64) ([]Result, error) {
+	if e.finished || at < 0 || at > math.MaxInt64-width {
+		return nil, fmt.Errorf("invalid live advance")
+	}
+	e.watermark = max(e.watermark, at-int64(e.config.Lateness))
+	out := e.drain(false)
+	e.tracker.Advance(e.watermark)
+	return out, nil
+}

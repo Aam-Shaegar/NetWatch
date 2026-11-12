@@ -6,3 +6,9 @@ data
 artifacts
 .env
 **/__pycache__
+
+AGENTS.md
+PLAN.md
+local-coursework
+docs/archive
+outputs

@@ -49,3 +49,5 @@ and byte counts continue. MaxPending bounds the reorder buffer; exceeding it
 returns an error without accepting the packet. Callers must stop or handle this
 loss explicitly. The engine is single-goroutine. Tests cover a 100,000-packet
 recording without retaining closed window history.
+
+For live input, `Advance` closes pending windows after a capture read timeout, using the same clock domain and lateness allowance. It does not synthesize empty windows. The CLI supplies live coverage bounds and capture-drop quality; shutdown tail windows remain partial.

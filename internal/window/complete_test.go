@@ -179,3 +179,24 @@ func TestLongReplayRetainsBoundedMemory(t *testing.T) {
 	t.Logf("live heap after 50k/100k packets: %d / %d bytes", baseline.HeapAlloc, end.HeapAlloc)
 	runtime.KeepAlive(e)
 }
+
+func TestLiveSilenceClosesWindow(t *testing.T) {
+	e, _ := New(config())
+	p := fixture(t, "syn-retry.pcap")
+	for _, packet := range p {
+		if _, err := e.Push(packet); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at, _ := strconv.ParseInt(p[0].Timestamp, 10, 64)
+	out, err := e.Advance(at + 6e9)
+	if err != nil || len(out) != 1 || out[0].OutPackets != 2 || out[0].NewTCPAttempts != 1 {
+		t.Fatal("silence did not close window", out, err)
+	}
+	if tail := e.Finish(); len(tail) != 0 {
+		t.Fatal("duplicate tail")
+	}
+	if _, err = e.Advance(at + 7e9); err == nil {
+		t.Fatal("advanced finished engine")
+	}
+}

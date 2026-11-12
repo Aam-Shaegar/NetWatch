@@ -29,6 +29,23 @@ services:
     stop_signal: SIGINT
     mem_limit: 128m
     pids_limit: 64
+  sensor:
+    image: netwatch-sensor:dev
+    build: {context: ../.., dockerfile: deploy/sensor/Dockerfile}
+    profiles: [live]
+    network_mode: "service:target"
+    depends_on:
+      target: {condition: service_healthy}
+    command: ["live", "--interface", "eth0", "--filter", "tcp port 8080", "--service", "${NETWATCH_SERVICE:-unset:8080}", "--output", "/output/live.jsonl", "--record-pcap", "/output/live.pcap"]
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    volumes: ["${NETWATCH_RUN_DIR:-../../data/runs/current}:/output"]
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
+    mem_limit: 256m
+    pids_limit: 64
   client:
     image: netwatch-lab:dev
     pull_policy: never

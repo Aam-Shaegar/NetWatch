@@ -47,3 +47,7 @@ lab-smoke:
 	python3 scripts/lab_smoke.py
 fixtures:
 	$(UV) run --project ml --locked python scripts/generate_fixtures.py
+
+.PHONY: live-smoke
+live-smoke:
+	python3 scripts/live_smoke.py

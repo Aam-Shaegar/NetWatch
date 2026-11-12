@@ -58,3 +58,7 @@ go run ./cmd/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap -
 буфер пакетов, --max-unique ограничивает точные множества (по умолчанию по 100000).
 Каждый независимый запуск или перезапуск должен получать новый --epoch.
 Правила статистик и качества описаны в [window](internal/window/README.md).
+
+## Linux live capture
+
+`make live-smoke` builds the sensor and verifies real isolated Docker traffic against offline replay. See [the live runbook](docs/runbooks/live.md) for interface selection, BPF, capabilities, quality counters and limitations.
