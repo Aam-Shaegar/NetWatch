@@ -33,6 +33,7 @@ services:
     image: netwatch-sensor:dev
     build: {context: ../.., dockerfile: deploy/sensor/Dockerfile}
     profiles: [live]
+    group_add: ["${NETWATCH_OUTPUT_GID:-0}"]
     network_mode: "service:target"
     depends_on:
       target: {condition: service_healthy}
@@ -51,6 +52,7 @@ services:
     pull_policy: never
     command: ["python", "/lab/client.py"]
     profiles: [scenario]
+    group_add: ["${NETWATCH_OUTPUT_GID:-0}"]
     networks: [lab_data]
     environment: {RATE: "${RATE:-5}", DURATION: "${DURATION:-10}", SEED: "${SEED:-42}", PROFILE: "${PROFILE:-stable}"}
     volumes: ["${NETWATCH_RUN_DIR:-../../data/runs/current}:/output"]

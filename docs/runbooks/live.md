@@ -36,8 +36,10 @@ Choose the interface visible in that namespace. Create an output directory and
 use an explicit observed target address (replace the example values):
 
 ```sh
+mkdir -p output
+chmod 0770 output
 docker run --rm --network container:TARGET_CONTAINER \
-  --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges \
+  --group-add "$(id -g)" --cap-drop ALL --cap-add NET_RAW --security-opt no-new-privileges \
   --read-only -v "$PWD/output:/output" netwatch-sensor:dev \
   live --interface eth0 --filter 'tcp port 8080' \
   --service 172.20.0.2:8080 --output /output/windows.jsonl --duration 30s
@@ -45,7 +47,10 @@ docker run --rm --network container:TARGET_CONTAINER \
 
 No host network, privileged mode or NET_ADMIN is needed. The container currently
 uses UID 0 with all capabilities removed except NET_RAW; it is not a rootless
-capture implementation. Bind-mount permissions must allow writing. SIGINT and
+capture implementation. The output directory is group-writable (0770); the
+container receives its host group through `--group-add`. The smoke test sets
+`NETWATCH_OUTPUT_GID` for Compose. Artifact files remain 0600, and the test reads
+them through a read-only helper mount without widening their permissions. SIGINT and
 SIGTERM stop capture and flush the final partial window; the read poll is 200 ms.
 Native Linux builds require a C compiler and `libpcap-dev` (`go build
 ./cmd/netwatch-sensor`). Non-Linux or CGO-disabled builds retain offline replay

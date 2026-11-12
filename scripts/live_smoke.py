@@ -10,9 +10,10 @@ def main():
     root = Path(__file__).resolve().parents[1]
     run_id = f'live-{time.time_ns()}'
     output = root / 'data/runs' / run_id
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, mode=0o770)
+    output.chmod(0o770)
     env = dict(os.environ, NETWATCH_RUN_DIR=str(output), PROFILE='stable',
-               RATE='5', DURATION='20', SEED='42')
+               RATE='5', DURATION='20', SEED='42', NETWATCH_OUTPUT_GID=str(os.getgid()))
     compose = ['docker', 'compose', '-p', f'netwatch-{run_id}', '-f',
                str(root / 'deploy/lab/compose.yaml')]
 
@@ -51,7 +52,8 @@ def main():
                 break
             time.sleep(0.25)
         else:
-            raise RuntimeError(f'sensor did not start: {logs(sensor)}')
+            details = run(['docker', 'logs', sensor])
+            raise RuntimeError(f'sensor did not start: {details.stdout} {details.stderr}')
         config = inspect(sensor)['HostConfig']
         assert {c.removeprefix('CAP_') for c in config['CapAdd']} == {'NET_RAW'}, config['CapAdd']
         assert config['CapDrop'] == ['ALL'], config['CapDrop']
@@ -89,14 +91,15 @@ def main():
         assert 'error' not in stopped
         started = next(e for e in events if e.get('event') == 'live_started')
         run(['docker', 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
-             '-v', f'{output}:/output', 'netwatch-sensor:dev', 'replay',
+             '--group-add', str(os.getgid()), '-v', f'{output}:/output', 'netwatch-sensor:dev', 'replay',
              '--input', '/output/live.pcap', '--output', '/output/offline.jsonl',
              '--service', env['NETWATCH_SERVICE'], '--epoch', started['epoch']])
         # Native Linux preserves UID 0 and mode 0600 of sensor output. Read it
         # through a read-only mount, without making packet artifacts world-readable.
         def windows(name):
             content = run(['docker', 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
-                           '--read-only', '-v', f'{output}:/output:ro', '--entrypoint', '/bin/cat',
+                           '--read-only', '--group-add', str(os.getgid()), '-v', f'{output}:/output:ro',
+                           '--entrypoint', '/bin/cat',
                            'netwatch-sensor:dev', f'/output/{name}']).stdout
             return [json.loads(line) for line in content.splitlines()]
 
@@ -120,4 +123,10 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as error:
+        if os.environ.get('GITHUB_ACTIONS') == 'true':
+            message = str(error).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print(f'::error::{message}', flush=True)
+        raise
