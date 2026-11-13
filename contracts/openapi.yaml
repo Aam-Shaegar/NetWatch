@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: NetWatch foundation API
-  version: 0.2.0
+  title: NetWatch ingestion API
+  version: 0.3.0
 paths:
   /health/live:
     get:
@@ -10,17 +10,16 @@ paths:
   /health/ready:
     get:
       responses:
-        '503': {description: Foundation only; ingestion and models unavailable}
+        '200': {description: Ingestion database and schema ready; ML readiness is separate}
+        '503': {description: Database or schema unavailable}
   /v1/windows:
     post:
       summary: Atomic window delivery contract
       description: >-
-        Sensor-side protocol is implemented. The production receiver and its
-        database transaction are part of the server milestone. A 200 ACK must
-        follow durable commit of all events and jobs. Duplicate event IDs with
+        Receiver authenticates the sensor and validates all windows before storage.
+        A 200 ACK follows durable commit of all new events and inference jobs. Duplicate event IDs with
         identical content are successful; conflicting content is a 409 error.
         Maximum request body is 2 MiB; batch has at most 100 windows.
-      x-implementation-status: receiver-pending
       security: [{sensorToken: []}]
       parameters:
         - in: header
@@ -43,6 +42,7 @@ paths:
         '403': {description: Sensor not authorized; nothing committed}
         '409': {description: Existing event ID has conflicting content; nothing committed}
         '413': {description: Request too large; nothing committed}
+        '415': {description: Content-Type must be application/json}
         '422':
           description: Atomic rejection; zero-based error_index identifies an invalid window; nothing committed
           content:
@@ -50,6 +50,46 @@ paths:
               schema: {$ref: './rejection.schema.json'}
         '429': {description: Retry after backoff; no acknowledgment}
         '503': {description: Temporarily unavailable; no acknowledgment}
+  /v1/windows/{event_id}:
+    get:
+      security: [{sensorToken: []}]
+      parameters:
+        - {in: path, name: event_id, required: true, schema: {type: string, maxLength: 200}}
+      responses:
+        '200':
+          description: Stored window in the authenticated sensor scope
+          content:
+            application/json:
+              schema: {$ref: './window.schema.json'}
+        '401': {description: Invalid sensor token}
+        '404': {description: Window absent or belongs to another sensor}
+        '503': {description: Storage unavailable}
+  /v1/predictions/{event_id}:
+    get:
+      security: [{sensorToken: []}]
+      parameters:
+        - {in: path, name: event_id, required: true, schema: {type: string, maxLength: 200}}
+      responses:
+        '200':
+          description: At most 100 stored predictions with policy_version and processed_at; empty while pending or out of scope
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [predictions]
+                properties:
+                  predictions:
+                    type: array
+                    maxItems: 100
+                    items:
+                      type: object
+                      required: [prediction, policy_version, processed_at]
+                      properties:
+                        prediction: {$ref: './prediction.schema.json'}
+                        policy_version: {type: string}
+                        processed_at: {type: string, format: date-time}
+        '401': {description: Invalid sensor token}
+        '503': {description: Storage unavailable}
 components:
   securitySchemes:
     sensorToken:

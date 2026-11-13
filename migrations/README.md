@@ -1,4 +1,12 @@
-# Database migrations
-No application tables yet. PostgreSQL is provisioned for subsequent step 6.
-Create 000001_*.up.sql and matching rollback with tests when the store contract is implemented.
-Bootstrap must not invent a schema that silently commits current design decisions without review.
+# Versioned PostgreSQL migrations
+
+`000001_pipeline.up.sql` creates windows, batch receipts, leased inference jobs
+and unique predictions. The matching down file drops those application tables.
+`embed.go` embeds SQL into the API executable; `netwatch-api --migrate-only`
+applies the migration under a transaction-scoped advisory lock and records its
+SHA-256 in `schema_migrations`. Never edit an applied migration; add a new version
+when the migration runner is extended. API/worker startup requires this schema.
+
+`make server-smoke` checks application/rollback/reapplication on disposable real
+PostgreSQL schemas. A production rollback destroys data and is never automatic.
+See [server operations](../docs/runbooks/server.md) for configuration and guarantees.

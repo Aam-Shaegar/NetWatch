@@ -51,3 +51,11 @@ fixtures:
 .PHONY: live-smoke
 live-smoke:
 	python3 scripts/live_smoke.py
+
+.PHONY: server-smoke migrate worker
+server-smoke:
+	python3 scripts/server_smoke.py
+migrate:
+	go run ./cmd/netwatch-api --migrate-only
+worker:
+	go run ./cmd/netwatch-worker

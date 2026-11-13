@@ -14,7 +14,7 @@ import (
 )
 
 func Validate(kind string, data []byte) error {
-	kinds := []string{"window", "prediction", "packet", "batch", "ack", "rejection"}
+	kinds := []string{"window", "prediction", "packet", "batch", "ack", "rejection", "inference-request", "inference-response"}
 	known := false
 	for _, name := range kinds {
 		if kind == name {
@@ -66,7 +66,7 @@ func Validate(kind string, data []byte) error {
 			}
 		}
 	}
-	if kind == "batch" {
+	if kind == "batch" || kind == "inference-request" {
 		seen := map[string]bool{}
 		for _, value := range obj["windows"].([]any) {
 			raw, e := json.Marshal(value)
@@ -79,6 +79,23 @@ func Validate(kind string, data []byte) error {
 			id := value.(map[string]any)["event_id"].(string)
 			if seen[id] {
 				return fmt.Errorf("duplicate batch event_id")
+			}
+			seen[id] = true
+		}
+	}
+	if kind == "inference-response" {
+		seen := map[string]bool{}
+		for _, value := range obj["predictions"].([]any) {
+			raw, e := json.Marshal(value)
+			if e != nil {
+				return e
+			}
+			if e = Validate("prediction", raw); e != nil {
+				return e
+			}
+			id := value.(map[string]any)["event_id"].(string)
+			if seen[id] {
+				return fmt.Errorf("duplicate prediction event_id")
 			}
 			seen[id] = true
 		}

@@ -1,7 +1,7 @@
 # NetWatch
 
 Go-сборщик сетевого трафика + Python/PyTorch ML + web-интерфейс.
-Текущий статус: **подготовленный монорепозиторий, не готовый детектор**.
+Текущий статус: **сенсор, доставка, PostgreSQL API и worker реализованы; обучение детектора впереди**.
 
 ## Начать работу
 
@@ -18,9 +18,12 @@ make compose-check
 - [Стратегия и получение данных](docs/runbooks/data.md)
 - [Контракты признаков](contracts/features.md)
 
-`make api`, `make ml`, `make web` запускают каркасы сервисов. Readiness намеренно 503:
-модель и конвейер пока не реализованы. `make lab-smoke` записывает настоящий HTTP-обмен
-в изолированной Docker-сети; это smoke test, а не обучающая выборка.
+`make api` запускает приёмник после настройки БД, токенов и `make migrate`
+([инструкция](docs/runbooks/server.md)); `make worker` запускает обработку заданий.
+`make ml` и `make web` запускают ML-сервис и каркас интерфейса. ML readiness остаётся
+503 до появления проверенной модели; API readiness проверяет собственную БД.
+`make lab-smoke` записывает настоящий HTTP-обмен в изолированной Docker-сети;
+это smoke test, а не обучающая выборка.
 
 Go: cmd/, internal/. ML: ml/. UI: web/. Контракты: contracts/. Стенд: deploy/lab/.
 Старые netwatch/, examples/ и tests/test_core.py сохранены как legacy-прототип 0.1.
@@ -65,4 +68,8 @@ go run ./cmd/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap -
 
 ## Durable window delivery
 
-Live capture can persist windows with `--spool` and send them with `--endpoint`. Offline imports use `enqueue`, accumulated queues use `send`, and `spool-status` reports pending data and loss. See [delivery guarantees and commands](docs/runbooks/delivery.md). The production receiver/database is a separate server milestone.
+Live capture can persist windows with `--spool` and send them with `--endpoint`. Offline imports use `enqueue`, accumulated queues use `send`, and `spool-status` reports pending data and loss. See [delivery guarantees and commands](docs/runbooks/delivery.md). The PostgreSQL receiver and leased inference worker are available; see [server setup](docs/runbooks/server.md).
+
+## PostgreSQL ingestion and worker
+
+`make server-smoke` verifies atomic ingestion, duplicate delivery, lease recovery, worker crashes and ML failures on an isolated real PostgreSQL. It also starts the actual API, sensor, worker and Python ML service; an unavailable model remains pending and never produces a normal prediction. See [server setup and guarantees](docs/runbooks/server.md).

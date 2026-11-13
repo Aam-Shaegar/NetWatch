@@ -16,6 +16,8 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libpcap-dev
       - run: make bootstrap
       - run: test -z "$(gofmt -l cmd internal contracts/*.go)"
+      - run: go vet ./...
       - run: make test build compose-check
       - run: uv run --project ml --locked python scripts/check_fixtures.py
       - run: make live-smoke
+      - run: make server-smoke

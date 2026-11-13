@@ -21,9 +21,9 @@ go build -o ./bin/netwatch-sensor ./cmd/netwatch-sensor
 ./bin/netwatch-sensor spool-status --spool data/spool/replay
 ```
 
-Create `bin` and `outputs` directories before using these paths. The production
-`/v1/windows` receiver is not implemented yet: it belongs to the server milestone.
-The delivery tests use real local HTTP test receivers, not the health-only API.
+Create `bin` and `outputs` directories before using these paths. The PostgreSQL-backed `/v1/windows` receiver is available; see
+[server setup](server.md) for migrations, sensor credentials and workers.
+`make server-smoke` tests the sender against the real receiver and PostgreSQL.
 `make live-smoke` verifies live capture, replay parity and queue recovery in Linux.
 `go test -race ./internal/spool ./internal/transport ./cmd/netwatch-sensor` verifies
 crash recovery, outages, ambiguous ACKs, quarantine and the replay-to-HTTP path.
