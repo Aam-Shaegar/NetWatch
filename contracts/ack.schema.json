@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Durable atomic acknowledgment",
+  "required": [
+    "batch_id",
+    "accepted_event_ids"
+  ],
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "accepted_event_ids": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    }
+  }
+}

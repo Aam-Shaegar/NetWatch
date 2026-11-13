@@ -11,3 +11,47 @@ paths:
     get:
       responses:
         '503': {description: Foundation only; ingestion and models unavailable}
+  /v1/windows:
+    post:
+      summary: Atomic window delivery contract
+      description: >-
+        Sensor-side protocol is implemented. The production receiver and its
+        database transaction are part of the server milestone. A 200 ACK must
+        follow durable commit of all events and jobs. Duplicate event IDs with
+        identical content are successful; conflicting content is a 409 error.
+        Maximum request body is 2 MiB; batch has at most 100 windows.
+      x-implementation-status: receiver-pending
+      security: [{sensorToken: []}]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: {type: string, pattern: '^[0-9a-f]{64}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './batch.schema.json'}
+      responses:
+        '200':
+          description: All event IDs durably committed, including identical duplicates
+          content:
+            application/json:
+              schema: {$ref: './ack.schema.json'}
+        '400': {description: Invalid envelope; nothing committed}
+        '401': {description: Invalid or missing sensor token; nothing committed}
+        '403': {description: Sensor not authorized; nothing committed}
+        '409': {description: Existing event ID has conflicting content; nothing committed}
+        '413': {description: Request too large; nothing committed}
+        '422':
+          description: Atomic rejection; zero-based error_index identifies an invalid window; nothing committed
+          content:
+            application/json:
+              schema: {$ref: './rejection.schema.json'}
+        '429': {description: Retry after backoff; no acknowledgment}
+        '503': {description: Temporarily unavailable; no acknowledgment}
+components:
+  securitySchemes:
+    sensorToken:
+      type: http
+      scheme: bearer

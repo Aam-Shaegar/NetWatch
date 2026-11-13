@@ -37,7 +37,7 @@ services:
     network_mode: "service:target"
     depends_on:
       target: {condition: service_healthy}
-    command: ["live", "--interface", "eth0", "--filter", "tcp port 8080", "--service", "${NETWATCH_SERVICE:-unset:8080}", "--output", "/output/live.jsonl", "--record-pcap", "/output/live.pcap"]
+    command: ["live", "--interface", "eth0", "--filter", "tcp port 8080", "--service", "${NETWATCH_SERVICE:-unset:8080}", "--output", "/output/live.jsonl", "--record-pcap", "/output/live.pcap", "--spool", "/output/spool"]
     cap_drop: [ALL]
     cap_add: [NET_RAW]
     security_opt: ["no-new-privileges:true"]

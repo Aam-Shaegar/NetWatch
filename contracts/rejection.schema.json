@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "title": "Atomic batch rejection",
+  "required": [
+    "batch_id",
+    "code",
+    "error_index"
+  ],
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "code": {
+      "const": "invalid_window"
+    },
+    "error_index": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 99
+    }
+  }
+}

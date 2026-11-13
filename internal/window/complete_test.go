@@ -200,3 +200,40 @@ func TestLiveSilenceClosesWindow(t *testing.T) {
 		t.Fatal("advanced finished engine")
 	}
 }
+
+func TestEventIDStableAcrossSerializationAndReplay(t *testing.T) {
+	e, err := New(config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Result{Start: 10000000000, End: 15000000000, Coverage: "partial"}
+	a, err := e.Export(result, "sensor", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := e.Export(result, "sensor", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.EventID != b.EventID {
+		t.Fatal("same observation changed event ID")
+	}
+	for _, identity := range [][2]string{{"other-sensor", "run"}, {"sensor", "other-run"}} {
+		other, err := e.Export(result, identity[0], identity[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other.EventID == a.EventID {
+			t.Fatal("different observation reused identity")
+		}
+	}
+	result.Start += 5000000000
+	result.End += 5000000000
+	other, err := e.Export(result, "sensor", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.EventID == a.EventID {
+		t.Fatal("next window reused ID")
+	}
+}

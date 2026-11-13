@@ -37,3 +37,7 @@ AGENTS.md
 PROJECT_MEMORY.md
 NetWatch-чек-лист.md
 NetWatch-построчный-разбор.md
+
+# Durable sensor state (windows and local health metadata)
+/data/spool/
+*.seg

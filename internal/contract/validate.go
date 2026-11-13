@@ -14,22 +14,31 @@ import (
 )
 
 func Validate(kind string, data []byte) error {
-	if kind != "window" && kind != "prediction" && kind != "packet" {
+	kinds := []string{"window", "prediction", "packet", "batch", "ack", "rejection"}
+	known := false
+	for _, name := range kinds {
+		if kind == name {
+			known = true
+		}
+	}
+	if !known {
 		return fmt.Errorf("unknown contract %q", kind)
 	}
-	schemaData, err := contracts.Schemas.ReadFile(kind + ".schema.json")
-	if err != nil {
-		return err
-	}
-	schemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaData))
-	if err != nil {
-		return err
-	}
 	compiler := jsonschema.NewCompiler()
-	if err = compiler.AddResource("https://netwatch.local/"+kind, schemaDoc); err != nil {
-		return err
+	for _, name := range kinds {
+		schemaData, err := contracts.Schemas.ReadFile(name + ".schema.json")
+		if err != nil {
+			return err
+		}
+		schemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaData))
+		if err != nil {
+			return err
+		}
+		if err = compiler.AddResource("https://netwatch.local/"+name+".schema.json", schemaDoc); err != nil {
+			return err
+		}
 	}
-	schema, err := compiler.Compile("https://netwatch.local/" + kind)
+	schema, err := compiler.Compile("https://netwatch.local/" + kind + ".schema.json")
 	if err != nil {
 		return err
 	}
@@ -55,6 +64,23 @@ func Validate(kind string, data []byte) error {
 			if _, err = strconv.ParseInt(raw.(string), 10, 64); err != nil {
 				return fmt.Errorf("%s outside int64", key)
 			}
+		}
+	}
+	if kind == "batch" {
+		seen := map[string]bool{}
+		for _, value := range obj["windows"].([]any) {
+			raw, e := json.Marshal(value)
+			if e != nil {
+				return e
+			}
+			if e = Validate("window", raw); e != nil {
+				return e
+			}
+			id := value.(map[string]any)["event_id"].(string)
+			if seen[id] {
+				return fmt.Errorf("duplicate batch event_id")
+			}
+			seen[id] = true
 		}
 	}
 	if kind == "packet" && obj["decode_status"] == "decoded" {

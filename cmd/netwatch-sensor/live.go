@@ -42,7 +42,7 @@ func interfaces() error {
 	return json.NewEncoder(os.Stdout).Encode(out)
 }
 
-func live(ctx context.Context, args []string) error {
+func live(ctx context.Context, args []string) (returnErr error) {
 	fs := flag.NewFlagSet("live", flag.ContinueOnError)
 	iface := fs.String("interface", "", "named capture interface")
 	filter := fs.String("filter", "", "required BPF filter")
@@ -51,6 +51,7 @@ func live(ctx context.Context, args []string) error {
 	sensor := fs.String("sensor", "live", "sensor ID")
 	duration := fs.Duration("duration", 0, "optional capture duration; zero waits for a signal")
 	options := windowFlags(fs)
+	deliveryOptions := deliveryFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,6 +72,15 @@ func live(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if *deliveryOptions.dir != "" && engine == nil {
+		return fmt.Errorf("spooling requires --host or --service windows")
+	}
+	logs := newEventLog()
+	ctx, delivery, err := startDelivery(ctx, deliveryOptions, logs)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, delivery.close()) }()
 	file, err := os.OpenFile(*output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
@@ -101,7 +111,6 @@ func live(ctx context.Context, args []string) error {
 		ctx, cancel = context.WithTimeout(ctx, *duration)
 		defer cancel()
 	}
-	logs := json.NewEncoder(os.Stderr)
 	if err = logs.Encode(map[string]any{"event": "live_started", "start_ns": fmt.Sprint(started), "epoch": *options.epoch, "interface": *iface, "filter": *filter}); err != nil {
 		return err
 	}
@@ -130,6 +139,9 @@ func live(ctx context.Context, args []string) error {
 			}
 			dropped := stats.Dropped
 			w.Quality.CaptureDropped = &dropped
+			if err = delivery.append(w); err != nil {
+				return err
+			}
 			if err = encoder.Encode(w); err != nil {
 				return err
 			}

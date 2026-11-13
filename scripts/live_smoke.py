@@ -110,11 +110,16 @@ def main():
         for w in complete:
             assert w['features'] == offline[w['window_start_ns']]['features'], w
             assert w['quality']['capture_dropped'] == 0
+        persisted = json.loads(run(['docker', 'run', '--rm', '--network', 'none',
+                                    '--cap-drop', 'ALL', '--read-only', '--group-add', str(os.getgid()),
+                                    '-v', f'{output}:/output', 'netwatch-sensor:dev',
+                                    'spool-status', '--spool', '/output/spool']).stdout)
+        assert persisted['pending'] == len(live) and not persisted['degraded'], persisted
         report = dict(run_id=run_id, complete_windows=len(complete),
                       compared_features=len(complete[0]['features']), live_windows=len(live),
-                      records=stopped['records'], stats=stopped['stats'],
+                      records=stopped['records'], stats=stopped['stats'], spool=persisted,
                       checks=['interfaces', 'NET_RAW only', 'permission denial', 'invalid BPF',
-                              'idle duration', 'SIGTERM', 'live/replay feature equality'])
+                              'idle duration', 'SIGTERM', 'live/replay feature equality', 'live spool restart'])
         (output / 'live-report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(report, indent=2))
         print(f'Artifacts: {output}')

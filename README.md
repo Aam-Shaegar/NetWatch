@@ -62,3 +62,7 @@ go run ./cmd/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap -
 ## Linux live capture
 
 `make live-smoke` builds the sensor and verifies real isolated Docker traffic against offline replay. See [the live runbook](docs/runbooks/live.md) for interface selection, BPF, capabilities, quality counters and limitations.
+
+## Durable window delivery
+
+Live capture can persist windows with `--spool` and send them with `--endpoint`. Offline imports use `enqueue`, accumulated queues use `send`, and `spool-status` reports pending data and loss. See [delivery guarantees and commands](docs/runbooks/delivery.md). The production receiver/database is a separate server milestone.

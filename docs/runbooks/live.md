@@ -87,5 +87,5 @@ cannot infer kernel drops and leaves that counter unavailable.
 
 On a capture/statistics/write error the process exits unsuccessfully, retains
 already written output for diagnosis and marks any remaining exported windows
-as gaps. A crash can leave an incomplete last JSONL line. Durable delivery and
-recovery are a separate transport layer; the live output is not a durable spool.
+as gaps. A crash can leave an incomplete last JSONL line. Use `--spool` for durable window persistence and optionally `--endpoint` for delivery;
+see [delivery](delivery.md). The diagnostic JSONL file itself is not a durable spool.

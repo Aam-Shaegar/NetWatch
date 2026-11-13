@@ -37,3 +37,33 @@ func TestPrediction(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestDeliveryContracts(t *testing.T) {
+	raw, err := os.ReadFile("../../contracts/examples/window.valid.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var window map[string]any
+	json.Unmarshal(raw, &window)
+	id := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	batch := map[string]any{"schema_version": 1, "batch_id": id, "windows": []any{window}, "queue_loss": map[string]any{"count": 0}}
+	check := func(kind string, value any, want bool) {
+		t.Helper()
+		data, _ := json.Marshal(value)
+		if err := Validate(kind, data); (err == nil) != want {
+			t.Fatalf("%s: %v", kind, err)
+		}
+	}
+	check("batch", batch, true)
+	batch["windows"] = []any{window, window}
+	check("batch", batch, false)
+	batch["windows"] = []any{}
+	check("batch", batch, false)
+	batch["windows"] = []any{window}
+	window["window_end_ns"] = window["window_start_ns"]
+	check("batch", batch, false)
+	check("ack", map[string]any{"batch_id": id, "accepted_event_ids": []string{"a"}}, true)
+	check("ack", map[string]any{"batch_id": id, "accepted_event_ids": []string{"a", "a"}}, false)
+	check("rejection", map[string]any{"batch_id": id, "code": "invalid_window", "error_index": 0}, true)
+	check("rejection", map[string]any{"batch_id": id, "code": "invalid_window", "error_index": 100}, false)
+}
