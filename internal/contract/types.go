@@ -21,7 +21,15 @@ type Quality struct {
 	LatePackets    int64  `json:"late_packets"`
 	StateEvictions int64  `json:"state_evictions"`
 }
+type Classification struct {
+	Label       string   `json:"label"`
+	Probability *float64 `json:"probability"`
+	Version     string   `json:"version"`
+}
+
 type Prediction struct {
+	Classification *Classification `json:"classification,omitempty"`
+
 	SchemaVersion     int      `json:"schema_version"`
 	EventID           string   `json:"event_id"`
 	ModelID           string   `json:"model_id"`

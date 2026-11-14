@@ -99,6 +99,10 @@ def load_bundle(path, expected_sha):
             raise ValueError('invalid GRU configuration')
         bundle['runtime'] = unpack(payload)
         return bundle
+    if 'classifier' in payload:
+        from netwatch_ml.models.classifier import validate_classifier, version
+        validate_classifier(payload['classifier'])
+        bundle['classifier_version'] = version(payload['classifier'])
     forest = payload['forest']
     if not (math.isfinite(threshold) and threshold >= 0 and 0 < forest['normalizer'] < 100
             and 1 <= len(forest['trees']) <= 512):
@@ -133,10 +137,21 @@ def predict_window(window, bundle, history=()):
     result = dict(schema_version=1, event_id=window['event_id'], model_id=bundle['model_id'],
                   feature_set_version=VERSION, status='insufficient_data', score=None, threshold=None)
     if not supported_window(window):
+        if 'classifier_version' in bundle:
+            outside_profile = window['entity_type'] != 'destination_service' or not (
+                window['entity_id'].startswith('TCP/') and window['entity_id'].endswith(':8080'))
+            quality = window['quality']
+            has_loss = any(quality[k] not in (0, None) for k in ('capture_dropped', 'late_packets', 'state_evictions'))
+            full_window = int(window['window_end_ns']) - int(window['window_start_ns']) == 5_000_000_000
+            label = 'unknown' if outside_profile and full_window and quality['coverage'] == 'complete' and not has_loss else 'insufficient_data'
+            result['classification'] = dict(label=label, probability=None, version=bundle['classifier_version'])
         return result
     payload = bundle['detector']
     x = transform(matrix([window['features']]), payload['preprocessing'])[0]
     score = forest_score(x, payload['forest'])
     threshold = payload['threshold']
     result.update(score=score, threshold=threshold, status='anomalous' if score > threshold else 'normal')
+    if result['status'] == 'anomalous' and 'classifier_version' in bundle:
+        from netwatch_ml.models.classifier import classify
+        result['classification'] = classify(x, payload['classifier'], bundle['classifier_version'])
     return result

@@ -41,6 +41,8 @@ def main():
                       int(i['first_ns']) < event['end_ns'] and int(i['closed_ns'] or 0) > event['start_ns'])
         path = base+'/v1/incidents/'+target['id']
         env = dict(os.environ, NETWATCH_UI_URL=base, NETWATCH_UI_TEST_TOKEN=token, NETWATCH_UI_ID=target['id'])
+        if report.get('classifier_version'):
+            env['NETWATCH_UI_CLASSIFIER'] = report['classifier_version']
         subprocess.run(['node','test/journal.mjs'],cwd=ROOT/'web',env=env,check=True,timeout=90)
         before = get(path, token)
         restart()

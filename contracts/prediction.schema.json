@@ -51,6 +51,56 @@
         "null"
       ],
       "minimum": 0
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "probability",
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^cls-[0-9a-f]{24}$"
+        },
+        "label": {
+          "enum": [
+            "benign",
+            "foreground_pause",
+            "unknown",
+            "insufficient_data"
+          ]
+        },
+        "probability": {}
+      },
+      "if": {
+        "properties": {
+          "label": {
+            "enum": [
+              "unknown",
+              "insufficient_data"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "probability": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "probability": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 1
+          }
+        }
+      }
     }
   }
 }

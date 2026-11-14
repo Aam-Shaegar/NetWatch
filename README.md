@@ -83,3 +83,5 @@ Live capture can persist windows with `--spool` and send them with `--endpoint`.
 Результаты обучения GRU и сравнения с Isolation Forest, EWMA и фиксированным порогом приведены в [лабораторном отчёте](docs/runbooks/forecast-results.md).
 
 [Эксплуатационные испытания и восстановление](docs/runbooks/operations.md) · [Измеренные пределы](docs/runbooks/operations-results.md)
+
+[Классификация аномальных окон, обучение и результаты проверки](docs/runbooks/classification.md)

@@ -40,6 +40,27 @@ try {
   assert(data.events.some((e) => e.kind === "closed"));
   assert(data.events.some((e) => e.prediction.score > e.prediction.threshold));
   assert(data.events.every((e) => Number.isFinite(e.features.in_packets)));
+  if (process.env.NETWATCH_UI_CLASSIFIER) {
+    const observations = data.events.filter(
+      (e) => e.prediction.status === "anomalous",
+    );
+    assert(observations.length > 0);
+    for (const e of observations) {
+      assert.equal(
+        e.prediction.classification.version,
+        process.env.NETWATCH_UI_CLASSIFIER,
+      );
+      assert(
+        ["benign", "foreground_pause", "unknown"].includes(
+          e.prediction.classification.label,
+        ),
+      );
+    }
+    await page
+      .getByText(process.env.NETWATCH_UI_CLASSIFIER, { exact: true })
+      .first()
+      .waitFor();
+  }
   await page.getByLabel("Объект", { exact: true }).fill("missing");
   await page.getByRole("button", { name: "Применить" }).click();
   await page.getByText("Инцидентов по этому запросу нет.").waitFor();

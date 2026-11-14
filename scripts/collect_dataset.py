@@ -88,6 +88,8 @@ def main():
     parser.add_argument('--workers', type=int, default=3)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--use-local-images', action='store_true', help='use installed lab and sensor images')
+    parser.add_argument('--classification', action='store_true',
+                        help='collect the eight fixed supplementary classifier scenarios')
     args = parser.parse_args()
     if not 10 <= args.normal_runs <= 100 or not 30 <= args.seconds <= 1800 or not 1 <= args.workers <= 12:
         parser.error('expected 10..100 normal runs, 30..1800 seconds and 1..12 concurrent labs')
@@ -109,6 +111,9 @@ def main():
     profiles = ['stable', 'ramp', 'flash-crowd']
     plan = [(profiles[i % 3], args.seed + i, args.seconds, 2 + i % 4) for i in range(args.normal_runs)]
     plan += [('pause', args.seed + args.normal_runs + i, min(90, args.seconds), 4) for i in range(2)]
+    if args.classification:
+        plan = [('pause', seed, 75, 4 + seed % 3) for seed in range(810, 816)]
+        plan.extend([('flash-crowd', 910, 90, 6), ('pause', 911, 90, 5)])
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = [pool.submit(collect, folder, *scenario, provenance) for scenario in plan]
         groups = [future.result() for future in futures]

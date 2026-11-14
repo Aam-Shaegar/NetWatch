@@ -26,6 +26,11 @@ type Evidence = {
     status: string;
     score: number | null;
     threshold: number | null;
+    classification?: {
+      label: string;
+      probability: number | null;
+      version: string;
+    };
   };
 };
 type Detail = {
@@ -49,6 +54,13 @@ const kinds: Record<string, string> = {
   observed: "Наблюдение",
 };
 
+const labels: Record<string, string> = {
+  benign: "Штатный трафик",
+  foreground_pause: "Пауза основных запросов",
+  unknown: "Неизвестный тип",
+  insufficient_data: "Недостаточно данных",
+};
+
 function EvidenceTable({ events }: { events: Evidence[] }) {
   const total = ({ features }: Evidence) =>
     features.in_packets === null || features.out_packets === null
@@ -64,6 +76,7 @@ function EvidenceTable({ events }: { events: Evidence[] }) {
           <th>Пакеты, вход / выход</th>
           <th>Оценка / порог</th>
           <th>Событие</th>
+          <th>Тип окна и оценка модели</th>
         </tr>
       </thead>
       <tbody>
@@ -85,6 +98,24 @@ function EvidenceTable({ events }: { events: Evidence[] }) {
               {fmt(e.prediction.score)} / {fmt(e.prediction.threshold)}
             </td>
             <td>{kinds[e.kind]}</td>
+            <td>
+              {e.prediction.classification ? (
+                <>
+                  {labels[e.prediction.classification.label] ??
+                    "Неизвестный тип"}
+                  {e.prediction.classification.probability !== null &&
+                    " · " +
+                      e.prediction.classification.probability.toLocaleString(
+                        "ru-RU",
+                        { maximumFractionDigits: 3 },
+                      )}
+                  <br />
+                  <small>{e.prediction.classification.version}</small>
+                </>
+              ) : (
+                "—"
+              )}
+            </td>
           </tr>
         ))}
       </tbody>
