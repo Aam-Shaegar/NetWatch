@@ -11,7 +11,7 @@ import subprocess
 import time
 
 
-def main(window_path=None):
+def main(window_path=None, model_config=None):
     root = Path(__file__).resolve().parents[1]
     name = f'netwatch-server-test-{time.time_ns()}'
     password = secrets.token_hex(24)
@@ -35,12 +35,12 @@ def main(window_path=None):
         env['NETWATCH_TEST_DATABASE_URL'] = f'postgres://postgres:{password}@127.0.0.1:{port}/netwatch_test?sslmode=disable'
         if window_path is None:
             run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
-        native_smoke(root, name, env, run, window_path)
+        return native_smoke(root, name, env, run, window_path, model_config)
     finally:
         subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True, timeout=30)
 
 
-def native_smoke(root, container, env, run, window_path):
+def native_smoke(root, container, env, run, window_path, model_config):
     def port():
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
@@ -59,6 +59,11 @@ def native_smoke(root, container, env, run, window_path):
                       NETWATCH_SENSOR_TOKENS=json.dumps({scope: secret}),
                       NETWATCH_SENSOR_TOKEN=secret, NETWATCH_MODEL_ID='pending-model',
                       NETWATCH_ML_ENDPOINT=f'http://127.0.0.1:{ml_port}/v1/predict')
+    for key in ('NETWATCH_MODEL_BUNDLE', 'NETWATCH_MODEL_SHA256'):
+        native_env.pop(key, None)
+    if model_config:
+        native_env.update(model_config)
+    expected_ready = 200 if model_config else 503
     def get(url, token=None):
         request = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'} if token else {})
         try:
@@ -85,7 +90,7 @@ def native_smoke(root, container, env, run, window_path):
                         'netwatch_ml.serving.app:app', '--host', '127.0.0.1', '--port', str(ml_port)])
                 for _ in range(60):
                     try:
-                        if get(f'http://127.0.0.1:{api_port}/health/ready')[0] == 200 and get(f'http://127.0.0.1:{ml_port}/health/ready')[0] == 503:
+                        if get(f'http://127.0.0.1:{api_port}/health/ready')[0] == 200 and get(f'http://127.0.0.1:{ml_port}/health/ready')[0] == expected_ready:
                             break
                     except (OSError, ValueError):
                         pass
@@ -100,6 +105,20 @@ def native_smoke(root, container, env, run, window_path):
                 if set(stored.stdout.splitlines()) != {w['event_id'] for w in windows}:
                     raise RuntimeError('persisted jobs differ from submitted windows')
                 launch([str(temp / 'netwatch-worker')])
+                if model_config:
+                    for _ in range(100):
+                        status, body = get(f"http://127.0.0.1:{api_port}/v1/predictions/{windows[0]['event_id']}", secret)
+                        if status == 200 and body['predictions']:
+                            prediction = body['predictions'][0]['prediction']
+                            if (prediction['event_id'] != windows[0]['event_id'] or
+                                prediction['model_id'] != model_config['NETWATCH_MODEL_ID'] or
+                                prediction['status'] not in ('normal', 'anomalous') or
+                                prediction['score'] is None or prediction['threshold'] is None):
+                                raise RuntimeError('persisted model prediction is invalid')
+                            print(json.dumps(prediction), flush=True)
+                            return prediction
+                        time.sleep(.1)
+                    raise RuntimeError('trained model prediction did not reach PostgreSQL')
                 for _ in range(60):
                     result = run(['docker', 'exec', container, 'psql', '-U', 'postgres', '-d', 'netwatch_test', '-At', '-c',
                                   "SELECT max(last_error) FROM inference_jobs"], capture_output=True)

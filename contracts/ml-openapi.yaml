@@ -6,8 +6,8 @@ paths:
   /v1/predict:
     post:
       description: >-
-        Worker submits a versioned target and windows. Current Python service
-        returns 503 until a validated model exists; no synthetic prediction.
+        Worker submits a versioned target and windows. FastAPI loads a pinned local model bundle and
+        scores complete windows in the supported traffic profile.
       requestBody:
         required: true
         content:
@@ -19,6 +19,9 @@ paths:
           content:
             application/json:
               schema: {$ref: './inference-response.schema.json'}
+        '413': {description: Body exceeds 2 MiB}
+        '422': {description: Invalid contract or duplicate event ID}
+        '409': {description: Requested model or policy unavailable}
         '503': {description: Validated model unavailable; job must remain retryable}
   /health/live:
     get:

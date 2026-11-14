@@ -21,12 +21,11 @@ make api
 
 In another shell with the same database environment, run `make ml` and
 `make worker` in separate terminals. The API defaults to 127.0.0.1:8080 and the
-worker to http://127.0.0.1:8000/v1/predict. The actual Python service currently has
-no validated model: readiness and inference return 503. Jobs therefore remain
+worker to http://127.0.0.1:8000/v1/predict. Without a configured model bundle and its pinned checksum, readiness and inference return 503. Jobs therefore remain
 pending with `last_error=ml_http_503`; no normal prediction is invented. Use an
 isolated development database for `pending-model` experiments. Job model/policy
 identities are immutable snapshots; deployment of another model does not rewrite
-existing jobs. Model activation/reprocessing comes with the ML milestone.
+existing jobs. See [detector setup](detector.md) to configure a trained model for new jobs.
 
 A live sensor uses `--sensor live --spool data/spool/live --endpoint
 http://127.0.0.1:8080/v1/windows` plus its capture/entity/output flags. Its

@@ -1,7 +1,7 @@
 # NetWatch
 
 Go-сборщик сетевого трафика + Python/PyTorch ML + web-интерфейс.
-Текущий статус: **сенсор, доставка, PostgreSQL API и worker реализованы; обучение детектора впереди**.
+Текущий статус: **сенсор, доставка, PostgreSQL API и worker реализованы; первый лабораторный детектор обучается и обслуживает прогнозы через FastAPI**.
 
 ## Начать работу
 
@@ -21,7 +21,7 @@ make compose-check
 `make api` запускает приёмник после настройки БД, токенов и `make migrate`
 ([инструкция](docs/runbooks/server.md)); `make worker` запускает обработку заданий.
 `make ml` и `make web` запускают ML-сервис и каркас интерфейса. ML readiness остаётся
-503 до появления проверенной модели; API readiness проверяет собственную БД.
+503 до загрузки совместимого комплекта с проверенной контрольной суммой; API readiness проверяет собственную БД.
 `make lab-smoke` записывает настоящий HTTP-обмен в изолированной Docker-сети;
 это smoke test, а не обучающая выборка.
 
@@ -75,3 +75,5 @@ Live capture can persist windows with `--spool` and send them with `--endpoint`.
 `make server-smoke` verifies atomic ingestion, duplicate delivery, lease recovery, worker crashes and ML failures on an isolated real PostgreSQL. It also starts the actual API, sensor, worker and Python ML service; an unavailable model remains pending and never produces a normal prediction. See [server setup and guarantees](docs/runbooks/server.md).
 
 Для сбора размеченных данных используйте `make collect`, затем `make dataset` с каталогами входа и результата. Профили, разметка, состав Parquet и команды приведены в [руководстве по данным](docs/runbooks/data.md).
+
+Обучение, калибровка и проверка результата через Go-worker описаны в [руководстве по детектору](docs/runbooks/detector.md).

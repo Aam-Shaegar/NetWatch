@@ -68,3 +68,7 @@ dataset:
 	$(UV) run --project ml --locked python -m netwatch_ml.data.dataset "$(COLLECTION)" "$(OUTPUT)"
 collection-smoke:
 	$(UV) run --project ml --locked python scripts/collection_smoke.py
+
+.PHONY: train
+train:
+	$(UV) run --project ml --locked python -m netwatch_ml.training.baselines "$(DATASET)" "$(OUTPUT)"
