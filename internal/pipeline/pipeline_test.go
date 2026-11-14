@@ -515,10 +515,17 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	down2, err := migrations.Files.ReadFile("000002_incidents.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, string(down2)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = tx.Exec(ctx, string(down)); err != nil {
 		t.Fatal(err)
 	}
-	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version=1`)
+	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2)`)
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -614,5 +621,73 @@ func TestHTTPBoundsAndFutureTimestamp(t *testing.T) {
 	}
 	if count(t, db, "feature_windows") != 0 {
 		t.Fatal("invalid request persisted")
+	}
+}
+
+func TestIncidentProjectionInEventOrder(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	base := time.Unix(1700000000, 0)
+	var input []json.RawMessage
+	for i := 0; i < 7; i++ {
+		input = append(input, window(t, fmt.Sprint(i), base.Add(time.Duration(i)*5*time.Second)))
+	}
+	ingest(t, db, input...)
+	pending, retrying, err := db.JournalStatus(ctx)
+	if err != nil || !pending || retrying {
+		t.Fatal(pending, retrying, err)
+	}
+	for range input {
+		j, err := db.Claim(ctx, time.Minute, false)
+		if err != nil || j == nil {
+			t.Fatal(err)
+		}
+		p := prediction(*j)
+		if j.EventID == "1" || j.EventID == "2" || j.EventID == "3" {
+			p.Status = "anomalous"
+			high := .9
+			p.Score = &high
+		}
+		if err = db.Finish(ctx, *j, p); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Project(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, retrying, err = db.JournalStatus(ctx)
+	if err != nil || pending || retrying {
+		t.Fatal(pending, retrying, err)
+	}
+	list, err := db.IncidentList(ctx, store.IncidentFilter{})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list=%s err=%v", list, err)
+	}
+	var header struct {
+		ID     string
+		Closed *string `json:"closed_ns"`
+	}
+	json.Unmarshal(list[0], &header)
+	if header.Closed == nil {
+		t.Fatal("incident still open")
+	}
+	var id int64
+	fmt.Sscan(header.ID, &id)
+	detail, err := db.Incident(ctx, id, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail["events"].([]json.RawMessage)) != 7 {
+		t.Fatal(detail)
+	}
+	if err = db.AckIncident(ctx, id, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.AckIncident(ctx, id, "second"); err != nil {
+		t.Fatal(err)
+	}
+	var actor string
+	if err = db.Pool.QueryRow(ctx, "SELECT ack_by FROM incidents WHERE id=$1", id).Scan(&actor); err != nil || actor != "first" {
+		t.Fatal(actor, err)
 	}
 }

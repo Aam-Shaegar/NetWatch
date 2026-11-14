@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: NetWatch ingestion API
-  version: 0.3.0
+  title: NetWatch ingestion and incident API
+  version: 0.4.0
 paths:
   /health/live:
     get:
@@ -90,8 +90,107 @@ paths:
                         processed_at: {type: string, format: date-time}
         '401': {description: Invalid sensor token}
         '503': {description: Storage unavailable}
+  /v1/incidents:
+    get:
+      summary: List incidents in descending ID order
+      security: [{operatorToken: []}]
+      parameters:
+        - {in: query, name: entity, schema: {type: string, maxLength: 800}}
+        - {in: query, name: model, schema: {type: string, maxLength: 200}}
+        - {in: query, name: from, description: Inclusive detection time in epoch nanoseconds, schema: {type: integer, minimum: 0}}
+        - {in: query, name: until, description: Exclusive detection time in epoch nanoseconds (zero disables bound), schema: {type: integer, minimum: 0}}
+        - {in: query, name: before, description: Exclusive incident ID cursor, schema: {type: integer, minimum: 0}}
+      responses:
+        '200':
+          description: Page and pipeline-wide pending and retry indicators
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incidents, next, pending, retrying]
+                properties:
+                  incidents: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/Incident'}}
+                  next: {type: string, description: Empty on last page}
+                  pending: {type: boolean}
+                  retrying: {type: boolean}
+        '400': {description: Invalid filter or cursor}
+        '401': {description: Operator credentials required}
+        '503': {description: Storage unavailable}
+  /v1/incidents/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/incidentID'}
+    get:
+      security: [{operatorToken: []}]
+      parameters:
+        - {in: query, name: after, description: Exclusive start_ns of previous evidence page, schema: {type: integer, minimum: 0}}
+      responses:
+        '200':
+          description: Chronological evidence and incident metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [schema_version, feature_set_version, rule, incident, events, more]
+                properties:
+                  schema_version: {const: 1}
+                  feature_set_version: {const: traffic-v1}
+                  rule: {type: string}
+                  incident: {$ref: '#/components/schemas/Incident'}
+                  events:
+                    type: array
+                    maxItems: 200
+                    items:
+                      type: object
+                      required: [event, kind, start_ns, end_ns, features, quality, prediction]
+                      properties:
+                        event: {type: string}
+                        kind: {enum: [opened, signal, observed, unknown, closed]}
+                        start_ns: {type: string}
+                        end_ns: {type: string}
+                        features: {type: object}
+                        quality: {type: object}
+                        prediction: {$ref: './prediction.schema.json'}
+                  more: {type: boolean}
+        '400': {description: Invalid ID or cursor}
+        '401': {description: Operator credentials required}
+        '404': {description: Incident absent}
+        '503': {description: Storage unavailable}
+  /v1/incidents/{id}/ack:
+    parameters:
+      - {$ref: '#/components/parameters/incidentID'}
+    post:
+      security: [{operatorToken: []}]
+      summary: Record first acknowledgement using authenticated actor
+      responses:
+        '204': {description: Acknowledgement durably recorded or previously present}
+        '400': {description: Invalid ID}
+        '401': {description: Operator credentials required}
+        '404': {description: Incident absent}
+        '503': {description: Storage unavailable}
 components:
+  parameters:
+    incidentID: {in: path, name: id, required: true, schema: {type: integer, minimum: 1}}
+  schemas:
+    Incident:
+      type: object
+      required: [id, sensor, epoch, entity_type, entity, model, policy, first_ns, detected_ns, detected_at, last_ns, closed_ns, ack_at, ack_by]
+      properties:
+        id: {type: string}
+        sensor: {type: string}
+        epoch: {type: string}
+        entity_type: {type: string}
+        entity: {type: string}
+        model: {type: string}
+        policy: {type: string}
+        first_ns: {type: string}
+        detected_ns: {type: string}
+        detected_at: {type: string, format: date-time}
+        last_ns: {type: string}
+        closed_ns: {type: [string, 'null']}
+        ack_at: {type: [string, 'null'], format: date-time}
+        ack_by: {type: [string, 'null']}
   securitySchemes:
+    operatorToken: {type: http, scheme: bearer}
     sensorToken:
       type: http
       scheme: bearer

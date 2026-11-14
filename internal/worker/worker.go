@@ -149,6 +149,13 @@ func (w *Worker) Run(ctx context.Context) error {
 	defer w.client.CloseIdleConnections()
 	for ctx.Err() == nil {
 		worked, err := w.Once(ctx)
+		projectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		advanced, projectErr := w.Store.Project(projectCtx)
+		cancel()
+		worked = worked || advanced
+		if err == nil {
+			err = projectErr
+		}
 		if ctx.Err() != nil {
 			break
 		}

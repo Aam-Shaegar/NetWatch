@@ -79,7 +79,7 @@ A matching down migration exists and is tested only in disposable schemas. A
 rollback drops application data: back up first, stop writers, execute the down SQL
 and delete its schema_migrations row in the same transaction. Production migration
 credentials should own DDL; runtime roles only need SELECT/INSERT/UPDATE on the
-application tables and SELECT on schema_migrations. Development Compose uses its
+application tables, DELETE on incident_queue, access to the identity sequences and SELECT on schema_migrations. See [incident review](incidents.md) for the operator role and migration 000002. Development Compose uses its
 single local role for convenience. Retention and backup/restore drills remain
 operational-hardening work, not guarantees supplied by an empty schema.
 

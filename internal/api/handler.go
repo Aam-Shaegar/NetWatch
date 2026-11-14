@@ -23,6 +23,8 @@ import (
 type Config struct {
 	Store                  *store.Store
 	Tokens                 map[string]string
+	Operators              map[string]string
+	WebDir                 string
 	ModelID, PolicyVersion string
 }
 
@@ -46,6 +48,14 @@ func New(c Config) (http.Handler, error) {
 		}
 		tokens[hash] = sensor
 	}
+	usedOperators := map[[32]byte]bool{}
+	for actor, token := range c.Operators {
+		h := sha256.Sum256([]byte(token))
+		if actor == "" || len(actor) > 100 || strings.ContainsRune(actor, 0) || len(token) < 32 || strings.ContainsAny(token, " \r\n\t") || tokens[h] != "" || usedOperators[h] {
+			return nil, fmt.Errorf("invalid or overlapping operator credentials")
+		}
+		usedOperators[h] = true
+	}
 	return routes(c, tokens), nil
 }
 func sendJSON(w http.ResponseWriter, status int, value any) {
@@ -68,6 +78,7 @@ func routes(c Config, tokens map[[32]byte]string) http.Handler {
 	if c.Store == nil {
 		return mux
 	}
+	incidentRoutes(mux, c)
 	authorize := func(next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")

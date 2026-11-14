@@ -55,33 +55,47 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if _, err = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations(version bigint PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT clock_timestamp())`); err != nil {
 		return err
 	}
-	sql, err := migrations.Files.ReadFile("000001_pipeline.up.sql")
-	if err != nil {
-		return err
-	}
-	hash := sha256.Sum256(sql)
-	sum := hex.EncodeToString(hash[:])
-	var stored string
-	err = tx.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE version=1`).Scan(&stored)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err = tx.Exec(ctx, string(sql)); err != nil {
+	for index, file := range migrationFiles {
+		sql, err := migrations.Files.ReadFile(file)
+		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations(version,checksum) VALUES(1,$1)`, sum); err != nil {
+		hash := sha256.Sum256(sql)
+		sum := hex.EncodeToString(hash[:])
+		var stored string
+		err = tx.QueryRow(ctx, `SELECT checksum FROM schema_migrations WHERE version=$1`, index+1).Scan(&stored)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, err = tx.Exec(ctx, string(sql)); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO schema_migrations(version,checksum) VALUES($1,$2)`, index+1, sum); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
+		} else if stored != sum {
+			return fmt.Errorf("applied migration checksum differs")
 		}
-	} else if err != nil {
-		return err
-	} else if stored != sum {
-		return fmt.Errorf("applied migration checksum differs")
 	}
 	return tx.Commit(ctx)
 }
+
+var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql"}
+
 func (s *Store) Ready(ctx context.Context) error {
+	for i, file := range migrationFiles {
+		sql, err := migrations.Files.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(sql)
+		var ok bool
+		if err = s.Pool.QueryRow(ctx, `SELECT checksum=$2 FROM schema_migrations WHERE version=$1`, i+1, hex.EncodeToString(sum[:])).Scan(&ok); err != nil || !ok {
+			return fmt.Errorf("database schema not ready")
+		}
+	}
 	var ok bool
-	sql, _ := migrations.Files.ReadFile("000001_pipeline.up.sql")
-	hash := sha256.Sum256(sql)
-	err := s.Pool.QueryRow(ctx, `SELECT checksum=$1 AND to_regclass('feature_windows') IS NOT NULL AND to_regclass('inference_jobs') IS NOT NULL AND to_regclass('predictions') IS NOT NULL AND to_regclass('ingestion_batches') IS NOT NULL FROM schema_migrations WHERE version=1`, hex.EncodeToString(hash[:])).Scan(&ok)
+	err := s.Pool.QueryRow(ctx, `SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['feature_windows','inference_jobs','ingestion_batches','predictions','incidents','incident_queue','incident_events','incident_streams']) name`).Scan(&ok)
 	if err != nil || !ok {
 		return fmt.Errorf("database schema not ready")
 	}

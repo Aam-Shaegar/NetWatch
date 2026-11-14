@@ -50,7 +50,13 @@ func run() error {
 	if policy == "" {
 		policy = "v1"
 	}
-	handler, err := api.New(api.Config{Store: db, Tokens: tokens, ModelID: os.Getenv("NETWATCH_MODEL_ID"), PolicyVersion: policy})
+	var operators map[string]string
+	if raw := os.Getenv("NETWATCH_OPERATOR_TOKENS"); raw != "" {
+		if json.Unmarshal([]byte(raw), &operators) != nil {
+			return fmt.Errorf("invalid operator configuration")
+		}
+	}
+	handler, err := api.New(api.Config{Store: db, Tokens: tokens, Operators: operators, WebDir: os.Getenv("NETWATCH_WEB_DIR"), ModelID: os.Getenv("NETWATCH_MODEL_ID"), PolicyVersion: policy})
 	if err != nil {
 		return err
 	}

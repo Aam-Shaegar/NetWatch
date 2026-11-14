@@ -11,7 +11,7 @@ import subprocess
 import time
 
 
-def main(window_path=None, model_config=None):
+def main(window_path=None, model_config=None, journal=None):
     root = Path(__file__).resolve().parents[1]
     name = f'netwatch-server-test-{time.time_ns()}'
     password = secrets.token_hex(24)
@@ -35,12 +35,12 @@ def main(window_path=None, model_config=None):
         env['NETWATCH_TEST_DATABASE_URL'] = f'postgres://postgres:{password}@127.0.0.1:{port}/netwatch_test?sslmode=disable'
         if window_path is None:
             run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
-        return native_smoke(root, name, env, run, window_path, model_config)
+        return native_smoke(root, name, env, run, window_path, model_config, journal)
     finally:
         subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True, timeout=30)
 
 
-def native_smoke(root, container, env, run, window_path, model_config):
+def native_smoke(root, container, env, run, window_path, model_config, journal):
     def port():
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
@@ -85,9 +85,10 @@ def native_smoke(root, container, env, run, window_path, model_config):
             try:
                 run(['go', 'build', '-o', str(temp) + '/', './cmd/...'], timeout=120)
                 execute([str(temp / 'netwatch-api'), '--migrate-only'])
-                launch([str(temp / 'netwatch-api')])
-                launch([str(root / 'ml/.venv/bin/python'), '-m', 'uvicorn',
-                        'netwatch_ml.serving.app:app', '--host', '127.0.0.1', '--port', str(ml_port)])
+                api_process = launch([str(temp / 'netwatch-api')])
+                ml_command = [str(root / 'ml/.venv/bin/python'), '-m', 'uvicorn',
+                        'netwatch_ml.serving.app:app', '--host', '127.0.0.1', '--port', str(ml_port)]
+                ml_process = launch(ml_command)
                 for _ in range(60):
                     try:
                         if get(f'http://127.0.0.1:{api_port}/health/ready')[0] == 200 and get(f'http://127.0.0.1:{ml_port}/health/ready')[0] == expected_ready:
@@ -104,7 +105,26 @@ def native_smoke(root, container, env, run, window_path, model_config):
                               '-At', '-c', 'SELECT event_id FROM inference_jobs'], capture_output=True)
                 if set(stored.stdout.splitlines()) != {w['event_id'] for w in windows}:
                     raise RuntimeError('persisted jobs differ from submitted windows')
-                launch([str(temp / 'netwatch-worker')])
+                worker_process = launch([str(temp / 'netwatch-worker')])
+                if journal:
+                    def restart():
+                        for process in (worker_process, api_process, ml_process):
+                            process.terminate()
+                            process.wait(timeout=10)
+                        run(['docker','restart',container], capture_output=True, timeout=30)
+                        for _ in range(80):
+                            ready=subprocess.run(['docker','exec',container,'pg_isready','-U','postgres'],
+                                                 capture_output=True,timeout=5)
+                            if ready.returncode==0:
+                                break
+                            time.sleep(.2)
+                        exposed = run(['docker','port',container,'5432/tcp'], capture_output=True).stdout.strip()
+                        port = exposed.rsplit(':', 1)[1]
+                        native_env['NETWATCH_DATABASE_URL'] = f"postgres://postgres:{env['POSTGRES_PASSWORD']}@127.0.0.1:{port}/netwatch_test?sslmode=disable"
+                        launch(ml_command)
+                        launch([str(temp / 'netwatch-api')])
+                        launch([str(temp / 'netwatch-worker')])
+                    return journal(get, f'http://127.0.0.1:{api_port}', restart)
                 if model_config:
                     for _ in range(100):
                         status, body = get(f"http://127.0.0.1:{api_port}/v1/predictions/{windows[0]['event_id']}", secret)
