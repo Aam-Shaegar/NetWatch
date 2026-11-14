@@ -11,7 +11,7 @@ import subprocess
 import time
 
 
-def main(window_path=None, model_config=None, journal=None):
+def main(window_path=None, model_config=None, journal=None, experiment=None):
     root = Path(__file__).resolve().parents[1]
     name = f'netwatch-server-test-{time.time_ns()}'
     password = secrets.token_hex(24)
@@ -33,14 +33,14 @@ def main(window_path=None, model_config=None, journal=None):
         address = json.loads(run(['docker', 'inspect', name], capture_output=True).stdout)[0]
         port = address['NetworkSettings']['Ports']['5432/tcp'][0]['HostPort']
         env['NETWATCH_TEST_DATABASE_URL'] = f'postgres://postgres:{password}@127.0.0.1:{port}/netwatch_test?sslmode=disable'
-        if window_path is None:
+        if window_path is None and experiment is None:
             run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
-        return native_smoke(root, name, env, run, window_path, model_config, journal)
+        return native_smoke(root, name, env, run, window_path, model_config, journal, experiment)
     finally:
         subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True, timeout=30)
 
 
-def native_smoke(root, container, env, run, window_path, model_config, journal):
+def native_smoke(root, container, env, run, window_path, model_config, journal, experiment):
     def port():
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
@@ -89,7 +89,7 @@ def native_smoke(root, container, env, run, window_path, model_config, journal):
                 ml_command = [str(root / 'ml/.venv/bin/python'), '-m', 'uvicorn',
                         'netwatch_ml.serving.app:app', '--host', '127.0.0.1', '--port', str(ml_port)]
                 ml_process = launch(ml_command)
-                for _ in range(60):
+                for _ in range(200):
                     try:
                         if get(f'http://127.0.0.1:{api_port}/health/ready')[0] == 200 and get(f'http://127.0.0.1:{ml_port}/health/ready')[0] == expected_ready:
                             break
@@ -98,6 +98,9 @@ def native_smoke(root, container, env, run, window_path, model_config, journal):
                     time.sleep(0.1)
                 else:
                     raise RuntimeError('native API/ML startup failed')
+                if experiment:
+                    launch([str(temp / 'netwatch-worker')])
+                    return experiment(container, native_env, get)
                 (temp / 'window.jsonl').write_text(''.join(json.dumps(w) + '\n' for w in windows))
                 execute([str(temp / 'netwatch-sensor'), 'enqueue', '--input', str(temp / 'window.jsonl'), '--spool', str(temp / 'spool')])
                 execute([str(temp / 'netwatch-sensor'), 'send', '--spool', str(temp / 'spool'), '--endpoint', f'http://127.0.0.1:{api_port}/v1/windows', '--once'])

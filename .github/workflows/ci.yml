@@ -20,5 +20,6 @@ jobs:
       - run: make test build compose-check
       - run: uv run --project ml --locked python scripts/check_fixtures.py
       - run: make live-smoke
+      - run: make spool-disk-smoke
       - run: make server-smoke
       - run: make collection-smoke

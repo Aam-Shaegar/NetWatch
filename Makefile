@@ -35,6 +35,7 @@ compose-check: configure
 	docker compose --env-file .env -f deploy/compose.yaml config --quiet
 	docker compose -f deploy/lab/compose.yaml config --quiet
 	docker compose -f deploy/lab/compose.yaml -f deploy/lab/collection.yaml config --quiet
+	docker compose -f deploy/lab/compose.yaml -f deploy/lab/operations.yaml config --quiet
 db-up: configure
 	docker compose --env-file .env -f deploy/compose.yaml up -d --wait
 db-down:
@@ -76,3 +77,14 @@ train:
 .PHONY: compare
 compare:
 	$(UV) run --project ml --locked python -m netwatch_ml.training.forecast "$(DATASET)" "$(COLLECTION)" "$(BASELINE)" "$(OUTPUT)"
+
+.PHONY: bench operations spool-disk-smoke
+bench:
+	go test ./internal/window -run '^$$' -bench BenchmarkServiceWindows -benchtime=500000x -count=3
+
+OPERATIONS_SECONDS ?= 180
+operations:
+	$(UV) run --project ml --locked python scripts/operations.py "$(ARTIFACT)" --seconds "$(OPERATIONS_SECONDS)"
+
+spool-disk-smoke:
+	python3 scripts/spool_disk_smoke.py

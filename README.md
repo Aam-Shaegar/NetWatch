@@ -14,7 +14,7 @@ make build
 make compose-check
 ```
 
-Нужны Go 1.25+, Python 3.14, Node 22.12+ и Docker Compose.
+Нужны Go 1.26.11+, Python 3.14, Node 22.12+ и Docker Compose.
 Подробности: [рабочее окружение](docs/runbooks/development.md).
 
 - [Стратегия и получение данных](docs/runbooks/data.md)
@@ -81,3 +81,5 @@ Live capture can persist windows with `--spool` and send them with `--endpoint`.
 Обучение, калибровка и проверка результата через Go-worker описаны в [руководстве по детектору](docs/runbooks/detector.md).
 
 Результаты обучения GRU и сравнения с Isolation Forest, EWMA и фиксированным порогом приведены в [лабораторном отчёте](docs/runbooks/forecast-results.md).
+
+[Эксплуатационные испытания и восстановление](docs/runbooks/operations.md) · [Измеренные пределы](docs/runbooks/operations-results.md)
