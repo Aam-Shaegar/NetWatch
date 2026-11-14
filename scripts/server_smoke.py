@@ -11,7 +11,7 @@ import subprocess
 import time
 
 
-def main():
+def main(window_path=None):
     root = Path(__file__).resolve().parents[1]
     name = f'netwatch-server-test-{time.time_ns()}'
     password = secrets.token_hex(24)
@@ -33,22 +33,30 @@ def main():
         address = json.loads(run(['docker', 'inspect', name], capture_output=True).stdout)[0]
         port = address['NetworkSettings']['Ports']['5432/tcp'][0]['HostPort']
         env['NETWATCH_TEST_DATABASE_URL'] = f'postgres://postgres:{password}@127.0.0.1:{port}/netwatch_test?sslmode=disable'
-        run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
-        native_smoke(root, name, env, run)
+        if window_path is None:
+            run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
+        native_smoke(root, name, env, run, window_path)
     finally:
         subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True, timeout=30)
 
 
-def native_smoke(root, container, env, run):
+def native_smoke(root, container, env, run, window_path):
     def port():
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             return sock.getsockname()[1]
     api_port, ml_port = port(), port()
     secret = secrets.token_hex(32)
+    if window_path is None:
+        window = json.loads((root / 'contracts/examples/window.valid.json').read_text())
+        window.update(sensor_id='smoke', event_id='smoke-window')
+        windows = [window]
+    else:
+        windows = [json.loads(line) for line in window_path.read_text().splitlines()]
+    scope = windows[0]['sensor_id']
     native_env = dict(env, NETWATCH_DATABASE_URL=env['NETWATCH_TEST_DATABASE_URL'],
                       NETWATCH_LISTEN=f'127.0.0.1:{api_port}',
-                      NETWATCH_SENSOR_TOKENS=json.dumps({'smoke': secret}),
+                      NETWATCH_SENSOR_TOKENS=json.dumps({scope: secret}),
                       NETWATCH_SENSOR_TOKEN=secret, NETWATCH_MODEL_ID='pending-model',
                       NETWATCH_ML_ENDPOINT=f'http://127.0.0.1:{ml_port}/v1/predict')
     def get(url, token=None):
@@ -84,21 +92,23 @@ def native_smoke(root, container, env, run):
                     time.sleep(0.1)
                 else:
                     raise RuntimeError('native API/ML startup failed')
-                window = json.loads((root / 'contracts/examples/window.valid.json').read_text())
-                window.update(sensor_id='smoke', event_id='smoke-window')
-                (temp / 'window.jsonl').write_text(json.dumps(window) + '\n')
+                (temp / 'window.jsonl').write_text(''.join(json.dumps(w) + '\n' for w in windows))
                 execute([str(temp / 'netwatch-sensor'), 'enqueue', '--input', str(temp / 'window.jsonl'), '--spool', str(temp / 'spool')])
                 execute([str(temp / 'netwatch-sensor'), 'send', '--spool', str(temp / 'spool'), '--endpoint', f'http://127.0.0.1:{api_port}/v1/windows', '--once'])
+                stored = run(['docker', 'exec', container, 'psql', '-U', 'postgres', '-d', 'netwatch_test',
+                              '-At', '-c', 'SELECT event_id FROM inference_jobs'], capture_output=True)
+                if set(stored.stdout.splitlines()) != {w['event_id'] for w in windows}:
+                    raise RuntimeError('persisted jobs differ from submitted windows')
                 launch([str(temp / 'netwatch-worker')])
                 for _ in range(60):
                     result = run(['docker', 'exec', container, 'psql', '-U', 'postgres', '-d', 'netwatch_test', '-At', '-c',
-                                  "SELECT last_error FROM inference_jobs WHERE event_id='smoke-window'"], capture_output=True)
+                                  "SELECT max(last_error) FROM inference_jobs"], capture_output=True)
                     if result.stdout.strip() == 'ml_http_503':
                         break
                     time.sleep(0.1)
                 else:
                     raise RuntimeError('worker did not preserve unavailable-model job')
-                status, body = get(f'http://127.0.0.1:{api_port}/v1/predictions/smoke-window', secret)
+                status, body = get(f"http://127.0.0.1:{api_port}/v1/predictions/{windows[0]['event_id']}", secret)
                 if status != 200 or body['predictions'] != []:
                     raise RuntimeError('unavailable model produced a prediction')
                 print('Native API + sensor + worker + actual Python ML: committed ingestion, 503 retained for retry, no false prediction.', flush=True)

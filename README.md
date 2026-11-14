@@ -73,3 +73,5 @@ Live capture can persist windows with `--spool` and send them with `--endpoint`.
 ## PostgreSQL ingestion and worker
 
 `make server-smoke` verifies atomic ingestion, duplicate delivery, lease recovery, worker crashes and ML failures on an isolated real PostgreSQL. It also starts the actual API, sensor, worker and Python ML service; an unavailable model remains pending and never produces a normal prediction. See [server setup and guarantees](docs/runbooks/server.md).
+
+Для сбора размеченных данных используйте `make collect`, затем `make dataset` с каталогами входа и результата. Профили, разметка, состав Parquet и команды приведены в [руководстве по данным](docs/runbooks/data.md).

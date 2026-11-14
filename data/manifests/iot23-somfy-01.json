@@ -5,9 +5,30 @@
   "file_name": "somfy01.pcap",
   "bytes": 2094105,
   "sha256": "0ec756ff0e26fc6c7d985178a35206bd7bc5b8a33cc5c7a23d6bb0b103db2a2a",
-  "labels_status": "not_verified",
+  "labels_status": "audited_flow_labels_external_only",
   "training_ready": false,
   "group_id": "iot23-somfy-01",
   "record_count": 8276,
-  "capture_span_seconds": 5087.822
+  "capture_span_seconds": 5087.822,
+  "labels": {
+    "file_name": "conn.log.labeled",
+    "bytes": 18024,
+    "sha256": "fb37fb38393c48b064d3afd373b075ffe31063d4924a2df1c5d13fc490b830cc",
+    "source": "https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/CTU-Honeypot-Capture-7-1/Somfy-01/bro/conn.log.labeled",
+    "audit": {
+      "records": 130,
+      "labels": {
+        "benign": 130
+      },
+      "protocols": {
+        "udp": 71,
+        "tcp": 10,
+        "icmp": 49
+      },
+      "matched_directional_start_within_1ms": {
+        "udp": 69,
+        "tcp": 1
+      }
+    }
+  }
 }

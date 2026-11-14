@@ -1,0 +1,11 @@
+services:
+  target:
+    volumes: ["../../lab:/lab:ro"]
+  sensor:
+    volumes:
+      - capture:/output
+  client:
+    volumes: ["../../lab:/lab:ro"]
+    command: ["python", "/lab/collection_client.py"]
+volumes:
+  capture: {}

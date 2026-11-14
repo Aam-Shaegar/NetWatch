@@ -13,7 +13,7 @@ jobs:
         with: {node-version: '22', cache: npm, cache-dependency-path: web/package-lock.json}
       - uses: astral-sh/setup-uv@v6
         with: {version: '0.13.7', python-version: '3.14'}
-      - run: sudo apt-get update && sudo apt-get install -y libpcap-dev
+      - run: sudo apt-get update && sudo apt-get install -y libpcap-dev tcpdump
       - run: make bootstrap
       - run: test -z "$(gofmt -l cmd internal contracts/*.go)"
       - run: go vet ./...
@@ -21,3 +21,4 @@ jobs:
       - run: uv run --project ml --locked python scripts/check_fixtures.py
       - run: make live-smoke
       - run: make server-smoke
+      - run: make collection-smoke

@@ -22,20 +22,75 @@ After download run scripts/register_capture.py to compute SHA256 and metadata.
 Keep raw data in data/raw (ignored by Git); commit metadata/manifest after reviewing source and labels.
 Do not automatically label every packet in an attack day as malicious.
 
-## Own training data after extractor exists
+## Collect and audit laboratory windows
 
-Collect stable/ramp/flash-crowd/background-transfer runs with varied seeds, targets and schedules.
-Initial design: at least 20 independent normal runs of 10–30 minutes, then expand based on coverage.
-Separate complete runs into train/validation/calibration/test; never random neighboring windows.
-Add benign high-load runs before evaluating anomaly models. Keep class prevalence and unseen scenarios.
-For each run save actual start/stop, configuration, commit, image IDs, capture quality, achieved rate and target metrics.
-Keep label join separate from features. No IP/run_id/filename/absolute date in model inputs.
-Do not call these quantities statistically sufficient before evaluating learning curves and uncertainty.
+Install the project dependencies with `make bootstrap`. Collection uses the Linux
+Go sensor and an internal Docker Compose network per run. Dataset export also
+requires tcpdump on the host and the Go toolchain used by NetWatch.
 
-## Collect an independent normal run
+```sh
+make collect COLLECT_ARGS="--normal-runs 20 --seconds 600 --workers 3 --seed 42"
+# Substitute the collection directory printed by the command.
+make dataset COLLECTION=data/runs/collection-EXAMPLE OUTPUT=data/processed/experiment-01
+```
 
-From the project root run `python3 scripts/lab_smoke.py --profile ramp --duration 600 --rate 10 --seed 17`. Supported profiles: stable, ramp, flash-crowd. The client connects only to the lab target. Repeat with different seeds and workloads. Each run keeps PCAP, request start/end times, scenario settings, image ID, SHA256 and run/group ID in its own ignored directory under data/runs. Before training, validate capture integrity and coverage, freeze group splits, and extract windows with the same Go module used in serving.
+The default campaign rotates stable, ramp and flash-crowd demand over 20 independent
+ten-minute runs. Each run has its own target, network, sensor epoch and client.
+The flash crowd adds two concurrent visitors to the same application client namespace.
+Every run includes a concurrent 32 KiB background download about every two seconds.
+Two additional runs pause foreground requests during the middle third of a run of up
+to 90 seconds. The background lane continues. The client records observed monotonic
+scheduling boundaries as wall-clock nanoseconds for joining with packet capture time.
+This scenario measures a known application interruption. A DDoS class requires its
+own evidence. Changing the seed changes request jitter. Parallel labs share host
+resources. Record the worker count when comparing experiments.
+
+The runner stores configuration, source checksums, base Git revision, resolved image
+IDs, achieved counts, kernel loss counters, independent target request counters,
+request logs, PCAP and Go windows under data/runs. With `--use-local-images` the
+runner uses the installed lab and sensor images. The lab scripts are mounted read-only
+from the checkout. A completed collection publishes collection.json after all runs
+succeed. A failed run keeps an incomplete manifest for diagnosis.
+
+The exporter verifies PCAP hashes, complete request timelines, target/client counts,
+the number of HTTP GET packets and directional packet counts measured with tcpdump.
+Go replay must reproduce the live window IDs and all 16 features. The HTTP GET
+check applies to this lab's short plaintext requests. Only windows fully inside
+an observed interval and with known good capture quality enter Parquet. Boundary,
+mixed and incomplete counts remain in the manifest. A gap longer than six seconds
+in the roughly two-second background heartbeat excludes every intersecting window
+as unobserved, including windows adjacent to VM clock jumps. Missing windows are
+never imputed. Sequence consumers must require consecutive timestamps in one group. The paused foreground must
+have zero main requests and the background must have transferred data during it.
+
+Each split is a Parquet file with an explicit numeric schema. The manifest lists
+the 16 model input columns. Labels, event/group IDs, time, profile and entity are
+metadata. Read only feature_columns when fitting preprocessing or a model.
+The existing seeded splitter assigns whole normal runs to train, validation,
+calibration and test. The first fault run goes to validation and the second to
+test. The builder checks unique capture hashes, event IDs and cross-split feature
+vectors, including nulls, before publishing the output directory. Rebuilding
+requires a new output path. Keep the collection and the resulting manifest
+together to reproduce the exact partition.
+
+`make collection-smoke` tests a short real pause, checks the windows against
+PCAP and delivers them through the existing API, PostgreSQL queue and worker.
+CI runs it after building the lab images via live-smoke. The training collection
+uses the longer make collect campaign. All captures, request journals and Parquet
+files are local Git-ignored artifacts.
 
 ## Verified external replay sample
 
 IoT-23, CTU-Honeypot-Capture-7-1 / Somfy-01. Authors' catalog: https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/CTU-Honeypot-Capture-7-1/Somfy-01/ . Read all 8276 records (5087.822 seconds). Restore on another machine with `python3 scripts/fetch_sample.py`. The checked manifest records source, byte count and SHA256. Keep the raw file outside Git. Use this one IoT observation for offline compatibility and an external data point, separately from service-load experiments. Labels and deployment transfer need validation before training.
+
+### Audit the Somfy labels
+
+Run `python3 scripts/fetch_sample.py`, then
+`./scripts/uv run --project ml --locked python scripts/audit_somfy.py`.
+The registered [Zeek flow labels](https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/IndividualScenarios/CTU-Honeypot-Capture-7-1/Somfy-01/bro/conn.log.labeled)
+contain 130 benign flows. A directional TCP/UDP endpoint and packet-time check
+within 1 ms of the annotated start matched 69 of 71 UDP records and 1 of 10 TCP
+records. The 49 ICMP records fall outside that transport join. The audit does not
+establish labels for five-second service windows. Keep this capture external to
+the supervised laboratory partitions. See the
+[authors' dataset description and citation](https://www.stratosphereips.org/datasets-iot23).

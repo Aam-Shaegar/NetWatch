@@ -4,8 +4,8 @@
   "sources": [
     {
       "id": "local-lab",
-      "status": "smoke_generator_prepared",
-      "training_ready": false
+      "status": "grouped_capture_and_parquet_export",
+      "runbook": "docs/runbooks/data.md"
     },
     {
       "id": "cicids2017",
@@ -23,7 +23,7 @@
     },
     {
       "id": "iot23-somfy-01",
-      "status": "downloaded_hash_verified_and_read",
+      "status": "pcap_and_flow_labels_audited_external_only",
       "manifest": "data/manifests/iot23-somfy-01.json",
       "training_ready": false
     }

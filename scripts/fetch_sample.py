@@ -6,9 +6,7 @@ from tempfile import NamedTemporaryFile
 from urllib.request import urlopen
 
 
-def main():
-    root = Path(__file__).resolve().parents[1]
-    meta = json.loads((root / 'data/manifests/iot23-somfy-01.json').read_text())
+def restore(root, meta):
     dest = root / 'data/raw/iot23' / meta['file_name']
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
@@ -28,6 +26,13 @@ def main():
         print('Restored', dest)
     finally:
         partial.unlink(missing_ok=True)
+
+
+def main():
+    root = Path(__file__).resolve().parents[1]
+    meta = json.loads((root / 'data/manifests/iot23-somfy-01.json').read_text())
+    for artifact in [meta, meta['labels']]:
+        restore(root, artifact)
 
 
 if __name__ == '__main__':

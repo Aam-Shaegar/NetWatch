@@ -34,6 +34,7 @@ web:
 compose-check: configure
 	docker compose --env-file .env -f deploy/compose.yaml config --quiet
 	docker compose -f deploy/lab/compose.yaml config --quiet
+	docker compose -f deploy/lab/compose.yaml -f deploy/lab/collection.yaml config --quiet
 db-up: configure
 	docker compose --env-file .env -f deploy/compose.yaml up -d --wait
 db-down:
@@ -59,3 +60,11 @@ migrate:
 	go run ./cmd/netwatch-api --migrate-only
 worker:
 	go run ./cmd/netwatch-worker
+
+.PHONY: collect dataset collection-smoke
+collect:
+	python3 scripts/collect_dataset.py $(COLLECT_ARGS)
+dataset:
+	$(UV) run --project ml --locked python -m netwatch_ml.data.dataset "$(COLLECTION)" "$(OUTPUT)"
+collection-smoke:
+	$(UV) run --project ml --locked python scripts/collection_smoke.py
