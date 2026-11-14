@@ -29,6 +29,17 @@
       "items": {
         "$ref": "window.schema.json"
       }
+    },
+    "histories": {
+      "type": "object",
+      "maxProperties": 100,
+      "additionalProperties": {
+        "type": "array",
+        "maxItems": 12,
+        "items": {
+          "$ref": "window.schema.json"
+        }
+      }
     }
   }
 }

@@ -79,3 +79,5 @@ Live capture can persist windows with `--spool` and send them with `--endpoint`.
 Для сбора размеченных данных используйте `make collect`, затем `make dataset` с каталогами входа и результата. Профили, разметка, состав Parquet и команды приведены в [руководстве по данным](docs/runbooks/data.md).
 
 Обучение, калибровка и проверка результата через Go-worker описаны в [руководстве по детектору](docs/runbooks/detector.md).
+
+Результаты обучения GRU и сравнения с Isolation Forest, EWMA и фиксированным порогом приведены в [лабораторном отчёте](docs/runbooks/forecast-results.md).

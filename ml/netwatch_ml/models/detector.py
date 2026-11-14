@@ -71,7 +71,8 @@ def forest_score(x, forest):
 
 def model_id(payload):
     encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
-    return 'if-' + hashlib.sha256(encoded).hexdigest()[:24]
+    prefix = 'gru-' if payload.get('architecture') == 'gru' else 'if-'
+    return prefix + hashlib.sha256(encoded).hexdigest()[:24]
 
 
 def load_bundle(path, expected_sha):
@@ -92,6 +93,12 @@ def load_bundle(path, expected_sha):
         if arr.shape != (WIDTH,) or not np.isfinite(arr).all() or (key == 'scale' and np.any(arr <= 0)):
             raise ValueError('invalid preprocessing')
     threshold = payload['threshold']
+    if payload.get('architecture') == 'gru':
+        from netwatch_ml.models.gru import HISTORY, unpack
+        if not math.isfinite(threshold) or threshold < 0 or payload['history'] != HISTORY:
+            raise ValueError('invalid GRU configuration')
+        bundle['runtime'] = unpack(payload)
+        return bundle
     forest = payload['forest']
     if not (math.isfinite(threshold) and threshold >= 0 and 0 < forest['normalizer'] < 100
             and 1 <= len(forest['trees']) <= 512):
@@ -110,15 +117,22 @@ def load_bundle(path, expected_sha):
     return bundle
 
 
-def predict_window(window, bundle):
+def supported_window(window):
     quality = window['quality']
     supported = (window['entity_type'] == 'destination_service' and
                  window['entity_id'].startswith('TCP/') and window['entity_id'].endswith(':8080') and
                  int(window['window_end_ns']) - int(window['window_start_ns']) == 5_000_000_000)
+    return supported and quality['coverage'] == 'complete' and all(
+        quality[k] == 0 for k in ('capture_dropped', 'late_packets', 'state_evictions'))
+
+
+def predict_window(window, bundle, history=()):
+    if 'runtime' in bundle:
+        from netwatch_ml.models.gru import predict_sequence
+        return predict_sequence(window, history, bundle)
     result = dict(schema_version=1, event_id=window['event_id'], model_id=bundle['model_id'],
                   feature_set_version=VERSION, status='insufficient_data', score=None, threshold=None)
-    if not supported or quality['coverage'] != 'complete' or any(
-            quality[k] != 0 for k in ('capture_dropped', 'late_packets', 'state_evictions')):
+    if not supported_window(window):
         return result
     payload = bundle['detector']
     x = transform(matrix([window['features']]), payload['preprocessing'])[0]

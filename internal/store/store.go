@@ -277,3 +277,18 @@ func (s *Store) Predictions(ctx context.Context, sensor, id string) ([]json.RawM
 	}
 	return out, rows.Err()
 }
+
+// ForecastHistory reads the prior minute for the target stream. ML verifies continuity and quality.
+func (s *Store) ForecastHistory(ctx context.Context, eventID string) ([]json.RawMessage, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT payload FROM (SELECT w.payload,w.window_end_ns FROM feature_windows w
+ JOIN feature_windows target ON target.event_id=$1 AND w.sensor_id=target.sensor_id
+ AND w.payload->>'capture_epoch'=target.payload->>'capture_epoch'
+ AND w.payload->>'entity_type'=target.payload->>'entity_type'
+ AND w.payload->>'entity_id'=target.payload->>'entity_id'
+ WHERE w.window_end_ns<=target.window_start_ns AND w.window_end_ns>target.window_start_ns-60000000000
+ ORDER BY w.window_end_ns DESC,w.event_id LIMIT 12) history ORDER BY window_end_ns`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[json.RawMessage])
+}

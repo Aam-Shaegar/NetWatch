@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"netwatch.local/netwatch/internal/contract"
@@ -19,10 +20,11 @@ import (
 )
 
 type Request struct {
-	SchemaVersion int               `json:"schema_version"`
-	ModelID       string            `json:"model_id"`
-	PolicyVersion string            `json:"policy_version"`
-	Windows       []json.RawMessage `json:"windows"`
+	Histories     map[string][]json.RawMessage `json:"histories,omitempty"`
+	SchemaVersion int                          `json:"schema_version"`
+	ModelID       string                       `json:"model_id"`
+	PolicyVersion string                       `json:"policy_version"`
+	Windows       []json.RawMessage            `json:"windows"`
 }
 type Response struct {
 	SchemaVersion int                   `json:"schema_version"`
@@ -66,7 +68,15 @@ func New(s *store.Store, c Config) (*Worker, error) {
 	return &Worker{Store: s, config: c, client: &http.Client{Timeout: c.Timeout, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (w *Worker) Infer(ctx context.Context, j store.Job) (contract.Prediction, error) {
-	body, err := json.Marshal(Request{1, j.ModelID, j.PolicyVersion, []json.RawMessage{j.Window}})
+	input := Request{SchemaVersion: 1, ModelID: j.ModelID, PolicyVersion: j.PolicyVersion, Windows: []json.RawMessage{j.Window}}
+	if strings.HasPrefix(j.ModelID, "gru-") {
+		past, err := w.Store.ForecastHistory(ctx, j.EventID)
+		if err != nil {
+			return contract.Prediction{}, fmt.Errorf("forecast_history_unavailable")
+		}
+		input.Histories = map[string][]json.RawMessage{j.EventID: past}
+	}
+	body, err := json.Marshal(input)
 	if err != nil {
 		return contract.Prediction{}, err
 	}

@@ -72,3 +72,7 @@ collection-smoke:
 .PHONY: train
 train:
 	$(UV) run --project ml --locked python -m netwatch_ml.training.baselines "$(DATASET)" "$(OUTPUT)"
+
+.PHONY: compare
+compare:
+	$(UV) run --project ml --locked python -m netwatch_ml.training.forecast "$(DATASET)" "$(COLLECTION)" "$(BASELINE)" "$(OUTPUT)"

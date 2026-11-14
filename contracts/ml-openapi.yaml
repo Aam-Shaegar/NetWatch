@@ -7,7 +7,7 @@ paths:
     post:
       description: >-
         Worker submits a versioned target and windows. FastAPI loads a pinned local model bundle and
-        scores complete windows in the supported traffic profile.
+        scores complete windows in the supported traffic profile. For a GRU, histories maps each target event ID to up to twelve earlier windows in ascending event time. Missing or discontinuous history returns warming_up.
       requestBody:
         required: true
         content:

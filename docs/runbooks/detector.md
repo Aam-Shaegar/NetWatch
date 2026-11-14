@@ -50,3 +50,54 @@ version and structure validation. Missing or incompatible bundles give 503. The 
 accepts at most 100 windows and 2 MiB per request. Partial coverage, observation loss
 or an unsupported profile produces insufficient_data with null score and threshold.
 Use the report to assess release suitability separately from the ability to serve the file.
+
+## GRU forecast and incident-level comparison
+
+Use the audited capture collection corresponding to the Parquet dataset, the
+trained baseline directory from the same manifest and a new output directory.
+
+```sh
+make compare DATASET=data/processed/EXPERIMENT COLLECTION=data/runs/COLLECTION BASELINE=artifacts/BASELINE OUTPUT=artifacts/FORECAST
+```
+
+The comparison writes a checksum-pinned GRU bundle and a report containing the
+validation losses, selected epoch, thresholds, scoring coverage, observed normal
+hours, missed events and individual event-time detection delays. Model weights
+and capture data stay local. The GRU uses the previous twelve continuous
+five-second windows of one stream to predict the next sixteen features. A
+64-unit GRU receives the standardized measurements and missingness indicators.
+The model trains on normal histories and targets with masked Huber loss, AdamW,
+minibatches of 128 and seed 42 on a single CPU thread. Training restores the
+lowest normal validation loss after five epochs without improvement or 50 epochs.
+Absolute errors are divided by median residuals on normal validation sequences
+(floor 0.01) and averaged over observed coordinates.
+
+For evaluation, complete windows including mixed event boundaries can supply
+causal history. The script verifies their capture checksums and scores all four
+methods on the same timelines. Only audited normal windows contribute normal
+exposure. The calibration budget is one false **window** per scored normal
+hour. Incident metrics use total audited normal exposure, including GRU warmup.
+Opening requires two exceedances in three continuous scored windows, closing
+requires three consecutive scores at or below 95% of threshold. A fault is
+detected when an incident opens during its recorded interval. Delay runs from
+fault onset to the end of the triggering window. These are event-time delays;
+they exclude queue and inference latency.
+
+Selection compares the two deployable detectors on validation, prioritizing the
+window budget, missed events, false incident rate, false window rate, then delay.
+Fixed limits and EWMA are offline benchmarks. Test results are measured after
+selection. See the [laboratory comparison](forecast-results.md).
+
+To run the experimental model, use the same environment and startup commands as
+for Isolation Forest with the GRU bundle path, checksum and model ID from its
+report. The worker queries PostgreSQL for up to twelve preceding windows of the
+same sensor, epoch and entity. Each request carries its own history. A short
+history, discontinuity or invalid observation in that history yields warming_up.
+The worker uses the observations present when it processes the job. A late
+arrival does not retroactively change a completed prediction. To verify the
+stored score through the worker, choose a capture with thirteen continuous
+supported windows of one stream.
+
+```sh
+ml/.venv/bin/python scripts/detector_smoke.py artifacts/FORECAST data/runs/COLLECTION/GROUP/live.jsonl
+```

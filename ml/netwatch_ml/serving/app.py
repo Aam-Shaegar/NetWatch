@@ -41,7 +41,7 @@ def create_app(bundle_path=None, checksum=None):
             raw.extend(block)
         try:
             body = json.loads(raw)
-            if (not isinstance(body, dict) or set(body) != {'schema_version', 'model_id', 'policy_version', 'windows'}
+            if (not isinstance(body, dict) or set(body) - {'histories'} != {'schema_version', 'model_id', 'policy_version', 'windows'}
                     or type(body['schema_version']) is not int or body['schema_version'] != 1
                     or not isinstance(body['windows'], list) or not 1 <= len(body['windows']) <= 100):
                 raise ValueError()
@@ -53,9 +53,17 @@ def create_app(bundle_path=None, checksum=None):
                 if window['event_id'] in ids:
                     raise ValueError()
                 ids.add(window['event_id'])
+            histories = body.get('histories', {})
+            if not isinstance(histories, dict) or histories.keys() - ids:
+                raise ValueError()
+            for past in histories.values():
+                if not isinstance(past, list) or len(past) > 12:
+                    raise ValueError()
+                for previous in past:
+                    validate('window', previous)
         except (ValidationError, UnicodeError, ValueError, TypeError, OverflowError, RecursionError):
             return JSONResponse(status_code=422, content={'error': 'invalid_inference_request'})
-        return {'schema_version': 1, 'predictions': [predict_window(w, bundle) for w in body['windows']]}
+        return {'schema_version': 1, 'predictions': [predict_window(w, bundle, histories.get(w['event_id'], ())) for w in body['windows']]}
 
     return app
 
