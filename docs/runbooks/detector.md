@@ -1,4 +1,4 @@
-# Train and run the first detector
+# Train and run the anomaly detector
 
 From a bootstrapped checkout, train on the Parquet directory produced by the collection exporter.
 Use a new output directory for each experiment.
@@ -40,8 +40,7 @@ Each method sets its threshold on independent normal calibration exposure. The a
 is floor(normal hours times one false window per hour). A score must strictly exceed
 the threshold. The report lists normal exposure, false windows and detected fault windows
 separately for each partition. Treat its test results as a held-out measurement for the
-fixed experiment. Repeated measurements from one pause are correlated. Incident-level
-rates require the incident policy in the subsequent milestone.
+fixed experiment. Repeated measurements from one pause are correlated. For incident-level results, see the [pilot measurements](operations-results.md).
 
 A completed experiment produces bundle.json and report.json. The model ID covers the
 forest, preprocessing, threshold, training provenance and profile. Load only an operator-

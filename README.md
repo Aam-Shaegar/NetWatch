@@ -1,87 +1,53 @@
 # NetWatch
 
-Go-сборщик сетевого трафика + Python/PyTorch ML + web-интерфейс.
-Текущий статус: **сенсор, доставка, PostgreSQL API и worker реализованы; первый лабораторный детектор обучается и обслуживает прогнозы через FastAPI**.
+NetWatch собирает статистику сетевого трафика и показывает, какие изменения привели к инциденту. Go-сенсор читает пакеты из PCAP или с интерфейса Linux и группирует их в пятисекундные окна. Для каждого окна Python-сервис оценивает отклонение от обычного поведения. Инциденты и связанные с ними окна сохраняются в PostgreSQL и доступны через веб-журнал.
 
-Журнал показывает, какие окна привели к инциденту, и сохраняет подтверждение оператора. [Запуск журнала и сквозная проверка](docs/runbooks/incidents.md).
+## Попробовать на записи
 
-## Начать работу
-
-```sh
-make bootstrap
-make test
-make build
-make compose-check
-```
-
-Нужны Go 1.26.11+, Python 3.14, Node 22.12+ и Docker Compose.
-Подробности: [рабочее окружение](docs/runbooks/development.md).
-
-- [Стратегия и получение данных](docs/runbooks/data.md)
-- [Контракты признаков](contracts/features.md)
-
-`make api` запускает приёмник после настройки БД, токенов и `make migrate`
-([инструкция](docs/runbooks/server.md)); `make worker` запускает обработку заданий.
-`make ml` и `make web` запускают ML-сервис и сервер разработки интерфейса. ML readiness остаётся
-503 до загрузки совместимого комплекта с проверенной контрольной суммой; API readiness проверяет собственную БД.
-`make lab-smoke` записывает настоящий HTTP-обмен в изолированной Docker-сети;
-это smoke test, а не обучающая выборка.
-
-Go: cmd/, internal/. ML: ml/. UI: web/. Контракты: contracts/. Стенд: deploy/lab/.
-Старые netwatch/, examples/ и tests/test_core.py сохранены как legacy-прототип 0.1.
-Для моделей используем собственные нормальные запуски и затем публичные PCAP;
-готовые CICFlowMeter CSV не подменяют наши признаки. Датасеты не входят в Git.
-
-Если uv отсутствует, bootstrap установит его только в .tools/ внутри проекта.
-
-Реальный внешний образец IoT-23 зарегистрирован в data/manifests/iot23-somfy-01.json. Для длинных независимых нормальных записей использовать scripts/lab_smoke.py. Подробности в docs/runbooks/data.md.
-
-## Чтение PCAP и PCAPNG на Go
+Из корня репозитория выполните команды ниже. Нужен Go версии из `go.mod`. При сборке под Linux с включённым CGO установите также заголовки libpcap. Команда читает небольшой PCAP из тестов. Для повторного запуска укажите новое имя выходного файла.
 
 ```sh
 mkdir -p outputs
-go run ./cmd/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap --output outputs/syn-retry.jsonl
+go run ./cmd/netwatch-sensor replay \
+  --input tests/fixtures/pcap/syn-retry.pcap \
+  --output outputs/windows.jsonl --host 192.0.2.10 --epoch fixture \
+  --coverage-start 1700000000000000000 --coverage-end 1700000005000000000
+cat outputs/windows.jsonl
 ```
 
-В JSONL одна строка соответствует одной записи захвата. Для этого примера ожидаются две строки TCP по 40 IP-байт с одинаковыми адресами, портами и SYN-флагом. Команда печатает число обработанных записей и причины исключения в stderr. Выбирайте новое имя выходного файла: существующий файл сохраняется, а при ошибке незавершённый результат не публикуется.
+В результате получится одно окно. Два исходящих SYN-пакета занимают 80 IP-байт и относятся к одной попытке соединения. Для разбора своей записи укажите адрес наблюдаемого хоста или параметр `--service IP:порт`. Границы наблюдения задаются в наносекундах Unix. Если их опустить, сенсор пометит покрытие как частичное. Без параметров хоста и сервиса команда `replay` выгружает метаданные отдельных пакетов. [Форматы захвата](internal/capture/README.md) · [Оконные признаки](contracts/features.md)
 
-Без --host/--service режим replay извлекает пакетные метаданные. Ограничения форматов описаны в [capture](internal/capture/README.md).
-
-## Окна статистики
-
-Добавьте к replay параметр --host или --service и идентификатор наблюдения --epoch:
+## Запустить на живом трафике
 
 ```sh
-go run ./cmd/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap --output outputs/windows.jsonl --host 192.0.2.10 --epoch fixture --coverage-start 1700000000000000000 --coverage-end 1700000005000000000
+make bootstrap
+make live-smoke
 ```
 
-Для сервиса используйте --service 198.51.100.20:443 --protocol TCP.
-Границы --coverage-start/--coverage-end задаются в наносекундах и означают явно
-подтверждённый непрерывный интервал наблюдения. При их отсутствии coverage=partial.
-На эталоне двух SYN получается одно окно, 80 исходящих IP-байт и одна попытка TCP.
---lateness задаёт допустимое опоздание (по умолчанию 1s), --max-pending ограничивает
-буфер пакетов, --max-unique ограничивает точные множества (по умолчанию по 100000).
-Каждый независимый запуск или перезапуск должен получать новый --epoch.
-Правила статистик и качества описаны в [window](internal/window/README.md).
+На macOS эти команды запускают сервис и сенсор внутри Docker Desktop. Сенсор наблюдает интерфейс тестового сервиса, пока клиент отправляет ему HTTP-запросы. В конце проверка сравнивает статистику живого трафика со статистикой повторного чтения той же записи. Результаты сохраняются в каталоге запуска под `data/runs/`. На Linux сенсор также можно запустить на интерфейсе наблюдаемого сервиса. [Подготовка окружения](docs/runbooks/development.md) · [Настройка интерфейса и фильтра](docs/runbooks/live.md)
 
-## Linux live capture
+## Подключить модель и открыть журнал
 
-`make live-smoke` builds the sensor and verifies real isolated Docker traffic against offline replay. See [the live runbook](docs/runbooks/live.md) for interface selection, BPF, capabilities, quality counters and limitations.
+1. Соберите размеченные запуски и экспортируйте окна командой `make dataset`. Сохраните путь к выходному каталогу. [Сбор данных](docs/runbooks/data.md)
+2. Обучите Isolation Forest командой `make train DATASET=… OUTPUT=…`. В выходном каталоге появятся `bundle.json` и `report.json`. Если у вас уже есть проверенный комплект, используйте его путь, идентификатор и SHA-256. Веса хранятся отдельно от исходников. [Загрузка модели](docs/runbooks/detector.md)
+3. Запустите PostgreSQL, примените миграции и укажите одинаковый идентификатор модели для API и worker. Настройте ключи сенсора и оператора перед запуском API. Отправьте окна через очередь сенсора. [Запуск процессов](docs/runbooks/server.md) · [Доставка окон](docs/runbooks/delivery.md)
+4. Откройте журнал на `http://127.0.0.1:8080/`. В карточке инцидента доступны время, признаки и оценки по каждому окну. Для сквозной проверки на своей машине предусмотрен сценарий с настоящим браузером. [Открыть и проверить журнал](docs/runbooks/incidents.md)
 
-## Durable window delivery
+## Что умеет модель
 
-Live capture can persist windows with `--spool` and send them with `--endpoint`. Offline imports use `enqueue`, accumulated queues use `send`, and `spool-status` reports pending data and loss. See [delivery guarantees and commands](docs/runbooks/delivery.md). The PostgreSQL receiver and leased inference worker are available; see [server setup](docs/runbooks/server.md).
+Лабораторная модель проверена для одного TCP-сервиса на порту 8080. Isolation Forest отмечает отклонения. Дополнительный классификатор различает обычную работу и паузу основных запросов при продолжающемся фоновом трафике. Плохое покрытие окна, неподдерживаемый профиль или низкая уверенность отражаются в результате.
 
-## PostgreSQL ingestion and worker
+В пилоте обработано 6 664 окна за несколько периодов наблюдения. Единственный зарегистрированный инцидент совпал с запланированной паузой. В отдельном эксперименте DDoS-кандидат пропустил независимый эпизод WebDDoS, поэтому продукт не выдаёт вероятность DDoS. [Результаты пилота](docs/runbooks/operations-results.md) · [Классификация](docs/runbooks/classification.md) · [Сравнение с прогнозом GRU](docs/runbooks/forecast-results.md)
 
-`make server-smoke` verifies atomic ingestion, duplicate delivery, lease recovery, worker crashes and ML failures on an isolated real PostgreSQL. It also starts the actual API, sensor, worker and Python ML service; an unavailable model remains pending and never produces a normal prediction. See [server setup and guarantees](docs/runbooks/server.md).
+## Код
 
-Для сбора размеченных данных используйте `make collect`, затем `make dataset` с каталогами входа и результата. Профили, разметка, состав Parquet и команды приведены в [руководстве по данным](docs/runbooks/data.md).
+| Каталог | Назначение |
+|---|---|
+| `cmd/`, `internal/` | Сенсор, разбор пакетов, статистика соединений, API и обработчик заданий |
+| `ml/` | Подготовка выборок, обучение и сервис прогнозирования |
+| `contracts/`, `migrations/` | Форматы обмена и схема PostgreSQL |
+| `web/` | Журнал инцидентов на React и TypeScript |
+| `deploy/`, `lab/`, `scripts/` | Docker-стенд, клиенты и воспроизводимые проверки |
+| `netwatch/`, `examples/` | Первоначальный автономный Python-прототип и пример входных данных |
 
-Обучение, калибровка и проверка результата через Go-worker описаны в [руководстве по детектору](docs/runbooks/detector.md).
-
-Результаты обучения GRU и сравнения с Isolation Forest, EWMA и фиксированным порогом приведены в [лабораторном отчёте](docs/runbooks/forecast-results.md).
-
-[Эксплуатационные испытания и восстановление](docs/runbooks/operations.md) · [Измеренные пределы](docs/runbooks/operations-results.md)
-
-[Классификация аномальных окон, обучение и результаты проверки](docs/runbooks/classification.md)
+Основные проверки запускаются через `make test build compose-check`. Для проверки очереди, базы и выдачи прогнозов используйте `make server-smoke`.

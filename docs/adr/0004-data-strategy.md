@@ -1,2 +1,7 @@
-# ADR 0004 — Local normal data plus public attack benchmarks
-Accepted 2026-11-06. GRU initially learns normal behavior from our own controlled lab. Public CIC PCAP is a supplementary benchmark and classifier candidate, not a compatible ready-made feature table. No random row split; assign complete capture/run groups. No training on tiny contract fixtures. No claim of external dataset acquisition until actual archives and checksums exist. Download forms need user-provided information; bootstrap never submits personal details.
+# ADR 0004 — Split training data by capture
+
+Accepted 2026-11-06.
+
+The laboratory provides ordinary traffic, controlled demand changes and a request log for each run. The Go sensor derives features from the packets. Each capture belongs to a single partition so neighbouring windows from one event stay together.
+
+External PCAPs go through the same extractor. Published flow tables use different features and time boundaries. Each experiment records the source, checksum and labels used to interpret the capture. [Data preparation](../runbooks/data.md) · [External evaluation](../runbooks/classification.md)

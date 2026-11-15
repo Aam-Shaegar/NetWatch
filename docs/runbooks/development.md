@@ -1,16 +1,24 @@
-# Development quickstart
+# Окружение разработки
 
-Install Go 1.26.11+, Python 3.14 (3.12/3.13 supported by package range), Node 22.12+ and Docker Compose.
-From the repository root: `make bootstrap`, `make test`, `make build`, `make compose-check`.
-`make api`: loopback port 8080; `make ml`: loopback 8000; `make web`: Vite loopback dev server.
-Both health/live return 200, health/ready return 503: ingestion and trained model are not implemented.
-`go run ./cmd/netwatch-sensor -validate window contracts/examples/window.valid.json` checks contracts.
-`make db-up` starts local PostgreSQL on 54329; `make db-down` preserves its volume.
-`make lab-smoke` builds an isolated benign HTTP test and records traffic under a unique directory in data/runs/.
-Each run creates a separate Compose project and terminates its containers on exit.
-`make lab-down` stops owned lab containers. No host interface capture occurs in bootstrap.
-Raw data, .env and models are ignored.
+Для полной сборки установите Go версии из `go.mod`, Python 3.12–3.14, Node.js 22.12 или новее и Docker с Compose. В CI используется Python 3.14. Для нативного живого захвата под Linux нужны CGO и заголовки libpcap. Для экспорта лабораторного датасета нужен tcpdump.
 
-When uv is absent, bootstrap installs pinned uv in .tools/uv; scripts/uv is the portable wrapper.
+```sh
+make bootstrap
+make doctor
+make test build compose-check
+```
 
-Lab PCAP uses full packet length only for synthetic HTTP traffic. Production sensor will discard payload.
+Bootstrap устанавливает Python-зависимости в `ml/.venv`, зависимости интерфейса в `web/node_modules` и создаёт локальный `.env` с паролем PostgreSQL. При отсутствии uv используется закреплённая версия в `.tools/uv`. Повторный запуск сохраняет уже заданный пароль.
+
+| Команда | Что запускает |
+|---|---|
+| `make db-up` | PostgreSQL на 127.0.0.1:54329 с постоянным томом |
+| `make migrate` | SQL-миграции в выбранной базе |
+| `make api` | Приём окон и журнал на 127.0.0.1:8080 |
+| `make worker` | Чтение очереди заданий и запись прогнозов |
+| `make ml` | FastAPI на 127.0.0.1:8000 |
+| `make web` | Сервер разработки интерфейса Vite |
+| `make live-smoke` | Проверку живого сенсора в отдельной Docker-сети |
+| `make db-down` | Остановку локальной БД с сохранением тома |
+
+Параметры окружения для API и worker приведены в [инструкции сервера](server.md). Для отображения журнала из API соберите фронтенд и задайте путь к нему по [инструкции журнала](incidents.md). Готовность API зависит от базы и версии её схемы. ML возвращает 503 до загрузки комплекта модели с подходящей версией и контрольной суммой. [Настройка детектора](detector.md)

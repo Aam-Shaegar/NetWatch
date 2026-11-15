@@ -1,7 +1,12 @@
 .PHONY: help configure bootstrap doctor test test-go test-python test-legacy build api ml web compose-check db-up db-down lab-up lab-down lab-smoke fixtures
 UV ?= ./scripts/uv
 help:
-	@echo "configure bootstrap doctor test build api ml web compose-check db-up db-down lab-smoke lab-down"
+	@echo "Setup:      bootstrap configure doctor"
+	@echo "Build:      build test compose-check"
+	@echo "Services:   db-up db-down migrate api worker ml web"
+	@echo "Capture:    lab-up lab-down lab-smoke live-smoke fixtures"
+	@echo "Models:     collect dataset train compare"
+	@echo "Checks:     collection-smoke server-smoke spool-disk-smoke bench operations"
 configure:
 	python3 scripts/configure.py
 bootstrap:

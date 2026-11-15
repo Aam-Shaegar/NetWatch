@@ -4,7 +4,7 @@
 
 Run `make bootstrap` once, then `make db-up`. Compose exposes development
 PostgreSQL only on 127.0.0.1:54329. Load the locally generated credentials and set
-an explicit inference target (replace `pending-model` when a validated model exists):
+the model ID from the trained artifact. For a queue-only experiment in a disposable database, use `pending-model`.
 
 ```sh
 set -a
@@ -13,7 +13,7 @@ set +a
 export NETWATCH_DATABASE_URL="$(python3 -c 'import os,urllib.parse; print("postgres://netwatch:"+urllib.parse.quote(os.environ["NETWATCH_DB_PASSWORD"],safe="")+"@127.0.0.1:54329/netwatch?sslmode=disable")')"
 export NETWATCH_SENSOR_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 export NETWATCH_SENSOR_TOKENS="$(python3 -c 'import os,json; print(json.dumps({"live":os.environ["NETWATCH_SENSOR_TOKEN"]}))')"
-export NETWATCH_MODEL_ID=pending-model
+export NETWATCH_MODEL_ID="${NETWATCH_MODEL_ID:?Set the model ID from report.json first}"
 export NETWATCH_POLICY_VERSION=v1
 make migrate
 make api

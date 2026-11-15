@@ -1,26 +1,8 @@
 # Data acquisition and provenance
 
-Use both: local lab normal runs for GRU, public raw PCAP for external evaluation and later classification.
-Never fit a model on contracts/examples or tests/fixtures: they are tiny correctness fixtures.
-The default lab smoke is also not a training dataset: ten seconds cannot supply a GRU history.
+The laboratory collection supplies labeled service windows for training. Public PCAPs provide independent traffic for replay and evaluation. Flow tables from other extractors have different feature definitions. NetWatch computes its own windows from the packets.
 
-## Public candidates checked 2026-11-06
-
-CIC-IDS2017: https://www.unb.ca/cic/datasets/ids-2017.html
-Raw PCAP plus labeled flows. Monday benign, later days mixed. Go must re-extract our features.
-Official download: https://cicresearch.ca/CICDataset/CIC-IDS-2017/ currently renders a registration form plus server-error message.
-CIC-DDoS2019: https://www.unb.ca/cic/datasets/ddos-2019.html
-Candidate for DDoS classifier, not guaranteed transfer to our network. Official download form:
-https://cicresearch.ca/CICDataset/CICDDoS2019/ — same form/error at check time.
-Citation is required by the published terms; retain the source paper and specific archive terms.
-Improved labels/tools: https://intrusion-detection.distrinet-research.be/WTMC2021/tools_datasets.html
-Known issues prevent blindly training on original flow CSV. Improved CSV still uses another extractor.
-
-No archive downloaded, no personal information submitted, no acquisition claimed.
-Use the official form manually if needed; do not treat a guessed directory URL as an archive.
-After download run scripts/register_capture.py to compute SHA256 and metadata.
-Keep raw data in data/raw (ignored by Git); commit metadata/manifest after reviewing source and labels.
-Do not automatically label every packet in an attack day as malicious.
+For the CIC-IDS2017 and CIC-DDoS2019 excerpts, use the pinned sources and checksums in the [classification runbook](classification.md). The Somfy capture and its flow-label audit are described below. For another capture, record its provenance with `scripts/register_capture.py`. Keep raw captures under `data/raw/` and check event times and targets before assigning window labels.
 
 ## Collect and audit laboratory windows
 

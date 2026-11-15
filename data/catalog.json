@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checked_at": "2026-11-06",
+  "checked_at": "2026-11-15",
   "sources": [
     {
       "id": "local-lab",
@@ -10,16 +10,16 @@
     {
       "id": "cicids2017",
       "landing_page": "https://www.unb.ca/cic/datasets/ids-2017.html",
-      "download_page": "https://cicresearch.ca/CICDataset/CIC-IDS-2017/",
-      "status": "form_and_server_error",
-      "downloaded": false
+      "status": "checksum_verified_pcap_excerpts",
+      "fetch_script": "scripts/fetch_classification_samples.py",
+      "runbook": "docs/runbooks/classification.md"
     },
     {
       "id": "cicddos2019",
       "landing_page": "https://www.unb.ca/cic/datasets/ddos-2019.html",
-      "download_page": "https://cicresearch.ca/CICDataset/CICDDoS2019/",
-      "status": "form_and_server_error",
-      "downloaded": false
+      "status": "checksum_verified_pcap_excerpts",
+      "fetch_script": "scripts/fetch_classification_samples.py",
+      "runbook": "docs/runbooks/classification.md"
     },
     {
       "id": "iot23-somfy-01",
