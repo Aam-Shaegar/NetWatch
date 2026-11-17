@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from netwatch_ml.contracts import validate
+from netwatch_ml.security import assess
 from netwatch_ml.models.detector import POLICY, load_bundle, predict_window
 
 
@@ -29,6 +30,18 @@ def create_app(bundle_path=None, checksum=None):
         if bundle is None:
             return JSONResponse(status_code=503, content={'status': 'not_ready', 'reason': 'no_validated_model'})
         return {'status': 'ready', 'model_id': bundle['model_id']}
+
+    @app.post('/v1/security/assess')
+    async def security_assessment(request: Request):
+        raw = bytearray()
+        async for block in request.stream():
+            if len(raw) + len(block) > 65536:
+                return JSONResponse(status_code=413, content={'error': 'observation_too_large'})
+            raw.extend(block)
+        try:
+            return assess(json.loads(raw))
+        except (ValidationError, ValueError, UnicodeError, RecursionError, OverflowError):
+            return JSONResponse(status_code=422, content={'error': 'invalid_security_observation'})
 
     @app.post('/v1/predict')
     async def predict(request: Request):

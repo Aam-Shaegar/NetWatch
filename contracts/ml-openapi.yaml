@@ -32,3 +32,15 @@ paths:
       responses:
         '200': {description: Validated compatible model ready}
         '503': {description: No validated model}
+  /v1/security/assess:
+    post:
+      description: Classify one minute of passive observations from a trusted source.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './security-observation.schema.json'}
+      responses:
+        '200': {description: Findings with evidence and a list of rules lacking measurements}
+        '413': {description: Body exceeds 64 KiB}
+        '422': {description: Invalid observation}

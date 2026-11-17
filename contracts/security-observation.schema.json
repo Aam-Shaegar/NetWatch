@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "entity",
+    "start_s",
+    "interval_s",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "entity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "start_s": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "interval_s": {
+      "const": 60
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auth_failure_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "auth_failures_same_principal": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dns_mean_label_length": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dns_queries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "dns_unique_label_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "handshake_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "header_timeout_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "headers_pending": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "http_clients": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "http_error_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "http_rate_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "icmp_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "in_pps": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "ingress_policy_verified": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "interval_cv": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "invalid_ingress_source_packets": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_ports_baseline_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max_ports_one_peer": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "oldest_header_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "outbound_intervals": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "pps_baseline_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "process_policy_violation": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "request_linked_process": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "sensitive_bytes_out": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "source_ips": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "syn_per_second": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "syn_rate_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tls_pin_mismatches": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "udp_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "unapproved_destination": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "unapproved_gateway_mac_change": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "unavailable_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "crs_rule_ids": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "integer",
+        "minimum": 100000,
+        "maximum": 999999
+      }
+    }
+  }
+}
