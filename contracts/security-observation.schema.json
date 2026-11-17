@@ -199,6 +199,61 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "normal_pps_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "normal_syn_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "normal_ports_ceiling": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "auth_failures_5m": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "auth_failure_fraction_5m": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "peak_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "normal_peak_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "peak_udp_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "normal_peak_udp_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "peak_icmp_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "normal_peak_icmp_pps_5s": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       }
     },

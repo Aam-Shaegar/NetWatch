@@ -9,9 +9,13 @@
   "SYN_DoS_pcap.pcap": "98a988f50e5e1a25c43e6275e3fe5ef682737252705315c1ae185735cd19eb1e",
   "aws_login_failure.records": "d9d0ebbaf9a6aebd504b03f665eb1f35dfee4e34c0c6a5cf1c5318b7a12c1e9b",
   "azure_ad_high_number_of_failed_authentications_for_user.records": "1d5c729dc5e864ca2894cceae832ff4119f17a709e1ec33838b3f60baab3af87",
+  "coap-iotsim-combined-cycle-1_0-0_to_OpenvSwitch-13_1-0.pcap": "42401f9b6171e6266e4fa50eda09a960decd4ec29aac7c6812d4fd329cdef17e",
   "esxi_ssh_brute_force.log": "19f8cb2e6f07b840f59333038e4c9ebf358104e8088be0c85497c711dab78e22",
+  "hue-benign.pcap": "f770897e6cc3fa45857aee25ef7d3ab39dba39127b5bb813e0e0d48d3b905347",
   "iotsim-combined-cycle-1.csv": "c3a7838b2855cb9f22567324f935b92c70262e0f1ccaa6135063a46d11facbb0",
   "iotsim-combined-cycle-10.csv": "3f8281eeaaa4cd68173409a65f5cb97b8b39aea4b78a7b5c94eea1be15531dba",
+  "iotsim-combined-cycle-10_0-0_to_OpenvSwitch-13_10-0.pcap": "2e76c0919c6369e5b7e7c681f075852270d5d44b7b1f6b800e77fb44b0e38a61",
+  "iotsim-combined-cycle-1_0-0_to_OpenvSwitch-13_1-0.pcap": "0938e4a175fea114336c5ad899ea83efd8323f7782d5f6f339bf5c17d8861fc8",
   "iotsim-predictive-maintenance-1.csv": "8f46f043dea6eab9dcf72687a0bc17022ea2857c3c61b24ff6554d7b1a8a4e38",
   "o365_brute_force_login.json": "922f890f21279e6dcec8ec0f765e3451cb0715ba0640f014267c5d582998a16b",
   "o365_high_number_authentications_for_user.records": "290be7bb862b8875698081116506ee57d0c074d5b8cd17fbf774583a29ecff94"

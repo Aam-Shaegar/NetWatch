@@ -101,7 +101,12 @@ def examine(path):
         raise ValueError("case has no usable authentication failures")
     hits = []
     for (minute, entity), lines in sorted(buckets.items()):
-        result = assess(from_events(lines, entity, minute, "auth"))
+        history = (
+            line
+            for offset in range(4, -1, -1)
+            for line in buckets.get((minute - offset * 60, entity), [])
+        )
+        result = assess(from_events(history, entity, minute, "auth", auth_history=True))
         if any(item["label"] == "password_guessing" for item in result["findings"]):
             hits.append(minute + 60)
     with path.open("rb") as f:

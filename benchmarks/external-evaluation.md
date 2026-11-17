@@ -1,6 +1,6 @@
 # Независимая проверка минутного классификатора
 
-Проверены правила NetWatch версии fa77ac6 без изменения порогов. Из корня проекта:
+Историческая таблица ниже относится к версии fa77ac6. Текущая команда запускает passive-v2. Актуальные результаты и причины пропусков описаны в [разборе](diagnosis.md). Из корня проекта:
 
     mkdir -p outputs
     ./scripts/uv run --project ml --locked python benchmarks/external_evaluation.py data/raw/independent-evaluation --json outputs/independent-evaluation.json
@@ -9,13 +9,15 @@
 
 ## Исходные данные
 
-Распакуйте 16 файлов в один каталог. Имена сверяются с реестром.
+Распакуйте 20 файлов в один каталог. Имена сверяются с реестром.
 
 * [Kitsune Network Attack](https://archive.ics.uci.edu/dataset/516/kitsune+network+attack+dataset), [отдельные файлы у автора](https://www.kaggle.com/datasets/ymirsky/network-attack-dataset-kitsune). Из OS Scan, SSDP Flood, SYN DoS и ARP MitM возьмите пары PCAP и labels.csv.
 * [GothamDataset2025](https://zenodo.org/records/14502760). В processed лежат три нужных CSV устройств iotsim-combined-cycle-1, iotsim-combined-cycle-10 и iotsim-predictive-maintenance-1.
 * [Splunk Attack Data, фиксированная ревизия](https://github.com/splunk/attack_data/tree/eb3ab7424aaa4bd7ac8e97fd0af6c1d29944d23c/datasets/attack_techniques). Скачайте содержимое Git LFS. В T1110 нужны файлы esxi_ssh_brute_force/esxi_ssh_brute_force.log и o365_brute_force_login/o365_brute_force_login.json. В T1110.001 возьмите aws_login_failure/aws_cloudtrail_events.json, azure_ad_high_number_of_failed_authentications_for_user/azuread.log и o365_high_number_authentications_for_user/o365_high_number_authentications_for_user.log. Последние три файла сохраните под именем их каталога с расширением .records.
 
-## Методика
+Для passive-v2 добавлены два PCAP нормы combined-cycle-1 и combined-cycle-10 из raw/benign архива Gotham, PCAP из raw/malicious/coap-amplificator (с префиксом coap-) и доброкачественная запись Philips Hue CTU-Honeypot-Capture-4-1, сохранённая как hue-benign.pcap. Имена и SHA-256 включены в реестр. Источник Hue: https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset-v2/CTU-Honeypot-Capture-4-1/pcap/2018-10-25-14-06-32-192.168.1.132.pcap
+
+## Историческая методика
 
 * Kitsune. Одна запись соответствует одному запуску авторов. Индексы меток сверяются с номерами пакетов. Из усечённых кадров извлекаются заголовки Ethernet и IPv4. Эталон для каждого адреса назначения берётся из первой полной минуты до атаки. Неполные граничные минуты и эталон исключаются из оценки. Для SYN считаются уникальные попытки и завершённые в той же минуте TCP-рукопожатия. При нулевом эталоне отношение к норме неизвестно.
 * Gotham. Основная точка наблюдения — combined-cycle-1. Один день UTC и один авторский тип активности образуют эпизод. Фазы одного стенда могут зависеть друг от друга. Combined-cycle-10 показывает тот же эксперимент со второй точки и не увеличивает знаменатель. Эталон — первая минута обычного эксперимента 14 января с исключительно нормальными метками и пакетами в обеих соседних минутах. При оценке сохраняются минуты с наблюдениями по обе стороны. Это исключает длительные разрывы между записями, но не подтверждает отсутствие потерь.
@@ -24,7 +26,7 @@
 * В Splunk единица — один опубликованный сценарий. Повторы удалены по ID. В ESXi учитывается итоговое сообщение SSH/PAM. Для Azure и O365 задержка считается от первой пригодной записи об отказе до конца минуты срабатывания. В O365 за 2023 год две записи имели некорректные секунды. В AWS у четырёх из семи записей скрыто имя пользователя. Нормальное время для этих выборок неизвестно.
 * Адаптеры подают измерения в Python-классификатор NetWatch. Время доставки по сети и запись в журнал интерфейса не измерялись. Для пятисекундной ML-модели в этих источниках отсутствует сопоставимая разметка профиля TCP/8080.
 
-## Результат
+## Исторический результат passive-v1
 
 | Гипотеза | Обнаружено / рассмотрено | Пропуски при доступной оценке | Без оценки | Ложных/ч | Задержка |
 |---|---:|---:|---:|---:|---|

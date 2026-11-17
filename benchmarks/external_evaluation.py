@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from auth import examine, FILES
+from benign_control import benign_control
 from gotham import evaluate
 from kitsune import benchmark, SCENARIOS, sha
 from netwatch_ml.security import RULES, WAF
@@ -107,10 +108,20 @@ def main():
             row["delays_s"] or "n/a",
             sep=" | ",
         )
+    control = benign_control(args.folder / "hue-benign.pcap")
+    print("Independent benign control (incidents / assessed minutes):")
+    for label, row in control.items():
+        print(label, row["false_incidents"], "/", row["assessed_minutes"])
     if args.json:
         args.json.write_text(
             json.dumps(
-                dict(summary=summary, kitsune=captures, gotham=devices, splunk=auth),
+                dict(
+                    summary=summary,
+                    kitsune=captures,
+                    gotham=devices,
+                    splunk=auth,
+                    hue_control=control,
+                ),
                 indent=2,
             )
             + "\n"

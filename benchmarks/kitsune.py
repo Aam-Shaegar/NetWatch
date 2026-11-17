@@ -15,7 +15,9 @@ import sys
 from scapy.utils import RawPcapReader
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ml"))
-from netwatch_ml.security import RULES, assess
+from netwatch_ml.bursts import BurstRates
+from netwatch_ml.handshakes import Handshakes
+from netwatch_ml.security import RULES, assess, with_reference
 
 SCENARIOS = {
     "OS_Scan": ["port_scan"],
@@ -29,9 +31,8 @@ SCENARIOS = {
 class Host:
     packets: Counter = field(default_factory=Counter)
     ports: dict = field(default_factory=lambda: defaultdict(set))
-    syn: dict = field(default_factory=dict)
-    replies: dict = field(default_factory=dict)
-    complete: set = field(default_factory=set)
+    burst: BurstRates = field(default_factory=BurstRates)
+    tcp: Handshakes = field(default_factory=Handshakes)
 
     def metrics(self):
         total = self.packets.total()
@@ -39,19 +40,18 @@ class Host:
             in_pps=total / 60,
             max_ports_one_peer=max(map(len, self.ports.values()), default=0),
             source_ips=len(self.ports),
-            syn_per_second=len(self.syn) / 60,
+            **self.tcp.metrics(),
+            **self.burst.metrics(),
         )
         if total:
             data.update(
                 udp_fraction=self.packets[17] / total,
                 icmp_fraction=self.packets[1] / total,
             )
-        if self.syn:
-            data["handshake_fraction"] = len(self.complete) / len(self.syn)
         return data
 
 
-def observe(hosts, frame):
+def observe(hosts, frame, ts):
     # Kitsune truncates payloads. Only complete Ethernet/IPv4 and transport headers are used.
     if len(frame) < 34 or frame[12:14] != b"\x08\x00":
         return None
@@ -61,6 +61,7 @@ def observe(hosts, frame):
     src, dst = frame[26:30], frame[30:34]
     proto = frame[23]
     host = hosts[dst]
+    host.burst.add(ts, {17: "UDP", 1: "ICMP"}.get(proto))
     host.packets[proto] += 1
     ports = host.ports[src]
     offset = 14 + ihl
@@ -73,33 +74,20 @@ def observe(hosts, frame):
     if proto == 6:
         flags = frame[offset + 13]
         seq, ack = struct.unpack_from("!II", frame, offset + 4)
-        key = (src, sport, dport)
-        if flags & 0x12 == 2:
-            host.syn[(key, seq)] = True
-        elif flags & 0x12 == 0x12:
-            origin = hosts[src]
-            attempt = ((dst, dport, sport), (ack - 1) % 2**32)
-            if attempt in origin.syn:
-                origin.replies[(attempt[0], (seq + 1) % 2**32)] = attempt
-        elif flags & 0x10 and not flags & 4:
-            attempt = host.replies.get((key, ack))
-            if attempt is not None and seq == (attempt[1] + 1) % 2**32:
-                host.complete.add(attempt)
+        host.tcp.observe(True, src, sport, dport, flags, seq, ack)
+        if flags & 0x16 == 0x12:
+            hosts[src].tcp.observe(False, dst, dport, sport, flags, seq, ack)
     return dst
 
 
 def score(hosts, reference, start):
     alerts, available = defaultdict(set), defaultdict(set)
-    for ip in hosts.keys() | reference.keys():
+    for ip in hosts.keys() | set().union(*reference):
         metrics = hosts[ip].metrics() if ip in hosts else Host().metrics()
-        base = reference.get(ip, {})
-        for metric, ratio in (
-            ("in_pps", "pps_baseline_ratio"),
-            ("max_ports_one_peer", "max_ports_baseline_ratio"),
-            ("syn_per_second", "syn_rate_ratio"),
-        ):
-            if base.get(metric, 0) > 0:
-                metrics[ratio] = metrics[metric] / base[metric]
+        empty = Host().metrics()
+        metrics = with_reference(
+            metrics, [minute.get(ip, empty) for minute in reference]
+        )
         result = assess(
             dict(
                 schema_version=1,
@@ -125,17 +113,16 @@ def benchmark(folder, name):
     (pcap,) = folder.glob(name + "_pcap.pcap*")
     labels = folder / (name + "_labels.csv")
     minutes = {}
-    reference = None
+    reference = []
     hosts, targets = defaultdict(Host), set()
     first = last = onset = end = None
     ipv4 = positives = partial = 0
 
     def close(start):
-        nonlocal reference
-        if reference is None:
+        if len(reference) < 5:
             if targets or onset is not None:
                 raise ValueError("reference minute must precede attack")
-            reference = {ip: h.metrics() for ip, h in hosts.items()}
+            reference.append({ip: h.metrics() for ip, h in hosts.items()})
         else:
             alerts, available = score(hosts, reference, start)
             minutes[start] = (alerts, available, targets.copy())
@@ -174,7 +161,7 @@ def benchmark(folder, name):
                 hosts.clear()
                 targets.clear()
                 current += 60
-            ip = observe(hosts, frame)
+            ip = observe(hosts, frame, ts)
             ipv4 += ip is not None
             partial += len(frame) < meta.wirelen
             if row[1] == "1":
