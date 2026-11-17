@@ -56,6 +56,10 @@ const kinds: Record<string, string> = {
 
 const labels: Record<string, string> = {
   benign: "Штатный трафик",
+  large_upload: "Рост входящих байтов на поток",
+  large_response: "Рост исходящих байтов на поток",
+  connection_surge: "Всплеск новых TCP-соединений",
+  persistent_exchange: "Активный обмен в одном длительном соединении",
   foreground_pause: "Пауза основных запросов",
   unknown: "Неизвестный тип",
   insufficient_data: "Недостаточно данных",

@@ -51,7 +51,7 @@ try {
         process.env.NETWATCH_UI_CLASSIFIER,
       );
       assert(
-        ["benign", "foreground_pause", "unknown"].includes(
+        ["benign", "foreground_pause", "unknown", "large_upload", "large_response", "connection_surge", "persistent_exchange"].includes(
           e.prediction.classification.label,
         ),
       );

@@ -70,7 +70,11 @@
             "benign",
             "foreground_pause",
             "unknown",
-            "insufficient_data"
+            "insufficient_data",
+            "large_upload",
+            "large_response",
+            "connection_surge",
+            "persistent_exchange"
           ]
         },
         "probability": {}
@@ -80,7 +84,11 @@
           "label": {
             "enum": [
               "unknown",
-              "insufficient_data"
+              "insufficient_data",
+              "large_upload",
+              "large_response",
+              "connection_surge",
+              "persistent_exchange"
             ]
           }
         }

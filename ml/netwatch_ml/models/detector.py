@@ -103,6 +103,14 @@ def load_bundle(path, expected_sha):
         from netwatch_ml.models.classifier import validate_classifier, version
         validate_classifier(payload['classifier'])
         bundle['classifier_version'] = version(payload['classifier'])
+    if 'pattern_limits' in payload:
+        from netwatch_ml.models.patterns import validate_limits
+        if 'classifier' not in payload:
+            raise ValueError('service patterns require the base classifier')
+        validate_limits(payload['pattern_limits'])
+        if threshold <= 0:
+            raise ValueError('service patterns require a positive threshold')
+        bundle['classifier_version'] = version([payload['classifier'], payload['pattern_limits']])
     forest = payload['forest']
     if not (math.isfinite(threshold) and threshold >= 0 and 0 < forest['normalizer'] < 100
             and 1 <= len(forest['trees']) <= 512):
@@ -150,6 +158,16 @@ def predict_window(window, bundle, history=()):
     x = transform(matrix([window['features']]), payload['preprocessing'])[0]
     score = forest_score(x, payload['forest'])
     threshold = payload['threshold']
+    if 'pattern_limits' in payload:
+        from netwatch_ml.models.patterns import match
+        label, ratio = match(window['features'], payload['pattern_limits'])
+        if label is None:
+            result['classification'] = dict(label='insufficient_data', probability=None, version=bundle['classifier_version'])
+            return result
+        if ratio > 1:
+            result.update(score=max(score, threshold * ratio), threshold=threshold, status='anomalous',
+                          classification=dict(label=label, probability=None, version=bundle['classifier_version']))
+            return result
     result.update(score=score, threshold=threshold, status='anomalous' if score > threshold else 'normal')
     if result['status'] == 'anomalous' and 'classifier_version' in bundle:
         from netwatch_ml.models.classifier import classify
