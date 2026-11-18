@@ -17,7 +17,6 @@ import (
 	"netwatch.local/netwatch/internal/decode"
 )
 
-const maxFile = 256 << 20
 const maxFrame = 1 << 20
 const maxBlock = 4 << 20
 
@@ -51,8 +50,8 @@ func open(ctx context.Context, f *os.File, sensor string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !stat.Mode().IsRegular() || stat.Size() > maxFile {
-		return nil, errors.New("expected regular file up to 256 MiB")
+	if !stat.Mode().IsRegular() {
+		return nil, errors.New("expected regular capture file")
 	}
 	var magic [4]byte
 	if _, err = f.ReadAt(magic[:], 0); err != nil {

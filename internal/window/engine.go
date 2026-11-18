@@ -161,6 +161,9 @@ func (e *Engine) Push(p decode.Meta) ([]Result, error) {
 	}
 	if at < e.watermark {
 		e.LatePackets++
+		// A published window is immutable. Flag the first still-open interval
+		// when the original event-time interval has already closed.
+		e.bucket(max(at/width*width, e.watermark/width*width)).LatePackets++
 		return nil, nil
 	}
 	if len(e.queue) >= e.config.MaxPending {
@@ -221,7 +224,6 @@ func (e *Engine) drain(all bool) []Result {
 		if e.config.CoverageStart != nil && w.Start >= *e.config.CoverageStart && w.End <= *e.config.CoverageEnd {
 			w.Coverage = "complete"
 		}
-		w.LatePackets = e.LatePackets
 		if w.gap || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
 			w.Coverage = "gap"
 		}
@@ -331,6 +333,9 @@ func (e *Engine) bucket(at int64) *accumulator {
 	}
 	return w
 }
+
+// ClosedThrough is the event-time boundary before which complete windows have drained.
+func (e *Engine) ClosedThrough() int64 { return e.watermark }
 
 // Advance closes windows during live silence once buffered packets are drained.
 // Call only after a capture read timeout, using the capture clock domain.

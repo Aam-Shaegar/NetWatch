@@ -86,12 +86,27 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("folder", type=Path)
     parser.add_argument("--json", type=Path)
+    parser.add_argument(
+        "--sensor", type=Path, help="use production Go replay for Kitsune inputs"
+    )
     args = parser.parse_args()
     hashes = json.loads(Path(__file__).with_name("external-inputs.json").read_text())
     for name, expected in hashes.items():
         if sha(args.folder / name) != expected:
             parser.error(f"unexpected digest for {name}")
-    captures = [benchmark(args.folder, n) for n in SCENARIOS]
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sensor = args.sensor
+        if sensor is None:
+            sensor = Path(tmp) / "netwatch-sensor"
+            subprocess.run(
+                ["go", "build", "-o", str(sensor), "./cmd/netwatch-sensor"],
+                cwd=Path(__file__).resolve().parents[1],
+                check=True,
+            )
+        captures = [benchmark(args.folder, n, sensor) for n in SCENARIOS]
     devices = [evaluate(args.folder / n) for n in DEVICES]
     auth = [examine(args.folder / n) for n in FILES]
     summary = combine(captures, devices, auth)

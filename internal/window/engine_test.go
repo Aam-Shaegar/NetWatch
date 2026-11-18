@@ -177,3 +177,22 @@ func TestIPv6AndICMP(t *testing.T) {
 		t.Fatalf("ICMP invented transport ports: %+v", w)
 	}
 }
+
+func TestLateQualityRecovers(t *testing.T) {
+	e, _ := New(config())
+	p := fixture(t, "syn-retry.pcap")[0]
+	for _, ts := range []string{"1000000000", "6000000000", "1500000000", "12000000000"} {
+		p.Timestamp = ts
+		closed, err := e.Push(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ts == "12000000000" && (len(closed) != 1 || closed[0].LatePackets != 1) {
+			t.Fatal(closed)
+		}
+	}
+	last := e.Finish()
+	if len(last) != 1 || last[0].LatePackets != 0 || last[0].Coverage == "gap" || e.LatePackets != 1 {
+		t.Fatal(last)
+	}
+}

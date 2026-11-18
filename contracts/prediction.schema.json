@@ -52,6 +52,7 @@
       ],
       "minimum": 0
     },
+    "reason": {"enum":["incompatible_model_or_policy","invalid_inference_request"]},
     "classification": {
       "type": "object",
       "additionalProperties": false,

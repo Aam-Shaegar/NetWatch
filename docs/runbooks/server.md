@@ -146,3 +146,21 @@ operators can inspect pending attempts/last_error in PostgreSQL.
 The current schema supports per-window inference. Multi-window history for GRU,
 model registry/activation, incidents, UI and load/retention acceptance are later
 milestones. This step verifies transport, persistence and recovery semantics.
+
+### Permanent inference rejection
+
+A structured 409 incompatible_model_or_policy or 422 invalid_inference_request
+from the ML service completes the job with status error, a reason and null
+scores. The projector can advance. Connection errors, 503 and invalid responses
+remain retryable. The journal reports terminal errors and the prediction API
+exposes the reason for the individual event. After validating a corrected model,
+an operator can schedule the affected windows under its new identity. Set the
+psql variable new_model to the deployed model ID before running this statement.
+
+    INSERT INTO inference_jobs(event_id,model_id,policy_version)
+    SELECT event_id, :'new_model', policy_version FROM predictions
+    WHERE payload->>'reason' IN ('incompatible_model_or_policy','invalid_inference_request')
+      AND model_id <> :'new_model'
+    ON CONFLICT DO NOTHING;
+
+Each new model has its own event-time incident stream and keeps the original error for audit.

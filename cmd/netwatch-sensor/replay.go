@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"netwatch.local/netwatch/internal/capture"
+	"netwatch.local/netwatch/internal/window"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 // Publish the complete JSONL atomically, without overwriting an existing file.
@@ -33,13 +36,32 @@ func replay(ctx context.Context, args []string) error {
 		return err
 	}
 	defer src.Close()
-	tmp, err := os.CreateTemp(filepath.Dir(*out), ".replay-*")
-	if err != nil {
-		return err
+	var tmp *os.File
+	output := os.Stdout
+	if *out != "-" {
+		tmp, err = os.CreateTemp(filepath.Dir(*out), ".replay-*")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tmp.Name())
+		defer tmp.Close()
+		output = tmp
 	}
-	defer os.Remove(tmp.Name())
-	defer tmp.Close()
-	enc := json.NewEncoder(tmp)
+	buffer := bufio.NewWriterSize(output, 256<<10)
+	enc := json.NewEncoder(buffer)
+	var coverage *coverageCursor
+	var coverageEnd int64
+	if engine != nil && *options.start != "" {
+		start, _ := strconv.ParseInt(*options.start, 10, 64)
+		coverageEnd, _ = strconv.ParseInt(*options.end, 10, 64)
+		coverage = newCoverage(start)
+	}
+	emit := func(r window.Result) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return writeWindows(enc, engine, []window.Result{r}, *id, *options.epoch)
+	}
 	counts := map[string]int{}
 	total := 0
 	for {
@@ -55,7 +77,7 @@ func replay(ctx context.Context, args []string) error {
 			if err != nil {
 				return err
 			}
-			e = writeWindows(enc, engine, windows, *id, *options.epoch)
+			e = coverage.write(windows, emit)
 		} else {
 			e = enc.Encode(m)
 		}
@@ -66,15 +88,23 @@ func replay(ctx context.Context, args []string) error {
 		total++
 	}
 	if engine != nil {
-		if err = writeWindows(enc, engine, engine.Finish(), *id, *options.epoch); err != nil {
+		if err = coverage.write(engine.Finish(), emit); err != nil {
 			return err
 		}
 	}
-	if err = tmp.Close(); err != nil {
+	if err = coverage.through(coverageEnd, emit); err != nil {
 		return err
 	}
-	if err = os.Link(tmp.Name(), *out); err != nil {
+	if err = buffer.Flush(); err != nil {
 		return err
+	}
+	if tmp != nil {
+		if err = tmp.Close(); err != nil {
+			return err
+		}
+		if err = os.Link(tmp.Name(), *out); err != nil {
+			return err
+		}
 	}
 	summary := map[string]any{"records": total, "status_counts": counts}
 	if engine != nil {

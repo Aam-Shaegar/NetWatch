@@ -166,3 +166,58 @@ def test_packet_import_applies_history_before_assessing_burst():
         "packet_flood",
         "udp_flood",
     }
+
+
+def test_minute_boundary_and_censored_handshake():
+    import json
+    from netwatch_ml.security_import import packet_metrics
+
+    def record(second, inbound, flags, seq, ack):
+        endpoints = ("192.0.2.1", "192.0.2.2", 41000, 8080)
+        src, dst, sport, dport = endpoints
+        if not inbound:
+            src, dst, sport, dport = dst, src, dport, sport
+        return json.dumps(
+            dict(
+                timestamp_ns=str(second * 10**9),
+                src_ip=src,
+                dst_ip=dst,
+                src_port=sport,
+                dst_port=dport,
+                protocol="TCP",
+                decode_status="decoded",
+                tcp_flags=flags,
+                tcp_seq=seq,
+                tcp_ack=ack,
+            )
+        )
+
+    packets = [
+        record(59, True, 2, 9, 0),
+        record(60, False, 18, 20, 10),
+        record(61, True, 16, 10, 21),
+    ]
+    assert packet_metrics(packets, "192.0.2.2", 0)["handshake_fraction"] == 1
+    assert "handshake_fraction" not in packet_metrics(packets[:1], "192.0.2.2", 0)
+    assert packet_metrics(packets, "192.0.2.2", 0)["in_pps"] == 1 / 60
+
+
+def test_shifted_packet_interval_separates_first_and_last_seconds():
+    import json
+    from netwatch_ml.security_import import packet_metrics
+
+    def record(second):
+        return json.dumps(
+            dict(
+                timestamp_ns=str(second * 10**9),
+                src_ip="192.0.2.1",
+                dst_ip="192.0.2.2",
+                dst_port=8080,
+                protocol="UDP",
+                decode_status="decoded",
+            )
+        )
+
+    for start in (0, 2, 59):
+        packets = [record(start)] * 50 + [record(start + 59)] * 50
+        assert packet_metrics(packets, "192.0.2.2", start)["peak_pps_5s"] == 10

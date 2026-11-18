@@ -21,16 +21,19 @@ import (
 )
 
 type Config struct {
-	Store                  *store.Store
-	Tokens                 map[string]string
-	Operators              map[string]string
-	WebDir                 string
-	ModelID, PolicyVersion string
+	Store                    *store.Store
+	Tokens                   map[string]string
+	Operators                map[string]string
+	WebDir, SecurityEndpoint string
+	ModelID, PolicyVersion   string
 }
 
 // Handler retains a liveness-only startup profile when no database is configured.
 func Handler() http.Handler { return routes(Config{}, nil) }
 func New(c Config) (http.Handler, error) {
+	if c.SecurityEndpoint != "" && !validSecurityEndpoint(c.SecurityEndpoint) {
+		return nil, fmt.Errorf("invalid assessment endpoint")
+	}
 	if strings.ContainsRune(c.ModelID+c.PolicyVersion, 0) {
 		return nil, fmt.Errorf("invalid inference target")
 	}
@@ -92,6 +95,7 @@ func routes(c Config, tokens map[[32]byte]string) http.Handler {
 			next(w, r, sensor)
 		}
 	}
+	mux.HandleFunc("POST /v1/security/assess", authorize(securityIngest(c)))
 	mux.HandleFunc("POST /v1/windows", authorize(func(w http.ResponseWriter, r *http.Request, sensor string) {
 		media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || media != "application/json" {

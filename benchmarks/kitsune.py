@@ -109,7 +109,51 @@ def sha(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def benchmark(folder, name):
+def sensor_packets(sensor, pcap):
+    import subprocess
+
+    with subprocess.Popen(
+        [str(sensor.resolve()), "replay", "--input", str(pcap), "--output", "-"],
+        stdout=subprocess.PIPE,
+    ) as proc:
+        try:
+            for line in proc.stdout:
+                yield json.loads(line)
+        finally:
+            proc.stdout.close()
+        if proc.wait():
+            raise ValueError("sensor replay failed")
+
+
+def observe_metadata(hosts, packet, ts):
+    if packet["decode_status"] == "non_ip":
+        return None
+    if packet["decode_status"] not in ("decoded", "fragment") and not packet.get(
+        "header_complete"
+    ):
+        raise ValueError("unobservable packet in sensor replay")
+    if ":" in packet["dst_ip"]:
+        return None  # This labelled benchmark is defined for IPv4 targets.
+    dst, src = map(socket.inet_aton, (packet["dst_ip"], packet["src_ip"]))
+    host = hosts[dst]
+    proto = packet["protocol"]
+    host.packets[{"TCP": 6, "UDP": 17, "ICMP": 1}.get(proto, 0)] += 1
+    host.burst.add(ts, proto)
+    ports = host.ports[src]
+    sport, dport = packet["src_port"], packet["dst_port"]
+    if dport is not None:
+        ports.add(dport)
+    if proto == "TCP" and packet["decode_status"] == "fragment":
+        host.tcp.observable = False
+    elif proto == "TCP":
+        flags, seq, ack = (packet[k] for k in ("tcp_flags", "tcp_seq", "tcp_ack"))
+        host.tcp.observe(True, src, sport, dport, flags, seq, ack)
+        if flags & 0x16 == 0x12:
+            hosts[src].tcp.observe(False, dst, dport, sport, flags, seq, ack)
+    return dst
+
+
+def benchmark(folder, name, sensor=None):
     (pcap,) = folder.glob(name + "_pcap.pcap*")
     labels = folder / (name + "_labels.csv")
     minutes = {}
@@ -127,7 +171,12 @@ def benchmark(folder, name):
             alerts, available = score(hosts, reference, start)
             minutes[start] = (alerts, available, targets.copy())
 
-    with RawPcapReader(str(pcap)) as capture, labels.open(newline="") as stream:
+    from contextlib import closing
+
+    source = (
+        closing(sensor_packets(sensor, pcap)) if sensor else RawPcapReader(str(pcap))
+    )
+    with source as capture, labels.open(newline="") as stream:
         rows = csv.reader(stream)
         if next(rows) != ["", "x"]:
             raise ValueError("unexpected label header")
@@ -139,15 +188,18 @@ def benchmark(folder, name):
                 or row[1] not in ("0", "1")
             ):
                 raise ValueError(f"packet and label mismatch at {index}")
-            frame, meta = record
-            if hasattr(meta, "tsresol"):
-                ts = ((meta.tshigh << 32) + meta.tslow) / meta.tsresol
-                link = meta.linktype
+            if sensor:
+                ts = int(record["timestamp_ns"]) / 1e9
             else:
-                ts = meta.sec + meta.usec / (1e9 if capture.nano else 1e6)
-                link = capture.linktype
-            if link != 1:
-                raise ValueError("expected Ethernet")
+                frame, meta = record
+                if hasattr(meta, "tsresol"):
+                    ts = ((meta.tshigh << 32) + meta.tslow) / meta.tsresol
+                    link = meta.linktype
+                else:
+                    ts = meta.sec + meta.usec / (1e9 if capture.nano else 1e6)
+                    link = capture.linktype
+                if link != 1:
+                    raise ValueError("expected Ethernet")
             if first is None:
                 first = ts
                 current = int(ts) // 60 * 60
@@ -161,9 +213,17 @@ def benchmark(folder, name):
                 hosts.clear()
                 targets.clear()
                 current += 60
-            ip = observe(hosts, frame, ts)
+            ip = (
+                observe_metadata(hosts, record, ts)
+                if sensor
+                else observe(hosts, frame, ts)
+            )
             ipv4 += ip is not None
-            partial += len(frame) < meta.wirelen
+            partial += (
+                record["captured_length"] < record["wire_length"]
+                if sensor
+                else len(frame) < meta.wirelen
+            )
             if row[1] == "1":
                 onset = ts if onset is None else min(ts, onset)
                 end = ts if end is None else max(ts, end)

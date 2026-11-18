@@ -118,6 +118,13 @@ func live(ctx context.Context, args []string) (returnErr error) {
 	counts := map[string]uint64{}
 	var total uint64
 	var stats capture.Stats
+	type lossInterval struct {
+		start, end int64
+		delta      capture.Stats
+	}
+	var losses []lossInterval
+	lastPoll := started
+	coverage := newCoverage(started)
 	poll := func() error {
 		previous := stats
 		var err error
@@ -128,16 +135,31 @@ func live(ctx context.Context, args []string) (returnErr error) {
 		if stats.Received < previous.Received || stats.Dropped < previous.Dropped || stats.InterfaceDropped < previous.InterfaceDropped {
 			return fmt.Errorf("capture counters wrapped")
 		}
+		now := time.Now().UnixNano()
+		if engine != nil && (stats.Dropped > previous.Dropped || stats.InterfaceDropped > previous.InterfaceDropped) {
+			losses = append(losses, lossInterval{lastPoll, now, capture.Stats{Dropped: stats.Dropped - previous.Dropped, InterfaceDropped: stats.InterfaceDropped - previous.InterfaceDropped}})
+		}
+		lastPoll = now
 		return logs.Encode(map[string]any{"event": "capture_stats", "stats": stats})
 	}
-	write := func(results []window.Result, end int64, failed bool) error {
-		for _, r := range results {
-			r.Coverage = liveCoverage(r, started, end, stats, failed)
+	write := func(results []window.Result, end int64, failed bool, through int64) error {
+		emit := func(r window.Result) error {
+			var delta capture.Stats
+			for len(losses) > 0 && losses[0].end <= r.Start {
+				losses = losses[1:]
+			}
+			for _, loss := range losses {
+				if loss.start < r.End && loss.end > r.Start {
+					delta.Dropped += loss.delta.Dropped
+					delta.InterfaceDropped += loss.delta.InterfaceDropped
+				}
+			}
+			r.Coverage = liveCoverage(r, started, end, delta, failed)
 			w, err := engine.Export(r, *sensor, *options.epoch)
 			if err != nil {
 				return err
 			}
-			dropped := stats.Dropped
+			dropped := delta.Dropped
 			w.Quality.CaptureDropped = &dropped
 			if err = delivery.append(w); err != nil {
 				return err
@@ -145,8 +167,12 @@ func live(ctx context.Context, args []string) (returnErr error) {
 			if err = encoder.Encode(w); err != nil {
 				return err
 			}
+			return nil
 		}
-		return nil
+		if err := coverage.write(results, emit); err != nil {
+			return err
+		}
+		return coverage.through(through, emit)
 	}
 	nextPoll := time.Now()
 	var runErr error
@@ -169,10 +195,8 @@ func live(ctx context.Context, args []string) (returnErr error) {
 					runErr = e
 					break
 				}
-				if len(results) > 0 {
-					if runErr = poll(); runErr == nil {
-						runErr = write(results, now, false)
-					}
+				if runErr = poll(); runErr == nil {
+					runErr = write(results, now, false, now-int64(*options.lateness))
 				}
 				if runErr != nil {
 					break
@@ -189,11 +213,15 @@ func live(ctx context.Context, args []string) (returnErr error) {
 		if engine == nil {
 			runErr = encoder.Encode(p)
 		} else {
+			before := engine.LatePackets
 			results, e := engine.Push(p)
+			if e == nil && engine.LatePackets > before {
+				e = logs.Encode(map[string]any{"event": "late_packet", "timestamp_ns": p.Timestamp, "epoch": *options.epoch})
+			}
 			runErr = e
-			if e == nil && len(results) > 0 {
+			if e == nil && (len(results) > 0 || coverage.next <= engine.ClosedThrough()-windowNS) {
 				if runErr = poll(); runErr == nil {
-					runErr = write(results, time.Now().UnixNano(), false)
+					runErr = write(results, time.Now().UnixNano(), false, engine.ClosedThrough())
 				}
 			}
 		}
@@ -206,7 +234,7 @@ func live(ctx context.Context, args []string) (returnErr error) {
 		runErr = err
 	}
 	if engine != nil {
-		if err = write(engine.Finish(), started, runErr != nil); runErr == nil {
+		if err = write(engine.Finish(), stopped, runErr != nil, stopped); runErr == nil {
 			runErr = err
 		}
 	}

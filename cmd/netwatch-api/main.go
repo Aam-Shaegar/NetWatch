@@ -56,7 +56,7 @@ func run() error {
 			return fmt.Errorf("invalid operator configuration")
 		}
 	}
-	handler, err := api.New(api.Config{Store: db, Tokens: tokens, Operators: operators, WebDir: os.Getenv("NETWATCH_WEB_DIR"), ModelID: os.Getenv("NETWATCH_MODEL_ID"), PolicyVersion: policy})
+	handler, err := api.New(api.Config{Store: db, SecurityEndpoint: os.Getenv("NETWATCH_SECURITY_ENDPOINT"), Tokens: tokens, Operators: operators, WebDir: os.Getenv("NETWATCH_WEB_DIR"), ModelID: os.Getenv("NETWATCH_MODEL_ID"), PolicyVersion: policy})
 	if err != nil {
 		return err
 	}

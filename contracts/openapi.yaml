@@ -12,6 +12,43 @@ paths:
       responses:
         '200': {description: Ingestion database and schema ready; ML readiness is separate}
         '503': {description: Database or schema unavailable}
+  /v1/security/assess:
+    post:
+      summary: Assess a minute and persist its evidence before acknowledging
+      security: [{sensorToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './security-observation.schema.json'}
+      responses:
+        '200':
+          description: Stored observation receipt
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, assessment]
+                properties:
+                  id: {type: string}
+                  assessment: {$ref: './security-assessment.schema.json'}
+        '401': {description: Invalid sensor credentials}
+        '413': {description: Request exceeds 64 KiB}
+        '422': {description: Invalid observation}
+        '502': {description: Invalid response from classifier}
+        '503': {description: Classification or storage unavailable}
+  /v1/security/observations:
+    get:
+      summary: Review observations and findings in descending receipt order
+      security: [{operatorToken: []}]
+      parameters:
+        - {in: query, name: before, schema: {type: integer, minimum: 0}}
+        - {in: query, name: entity, schema: {type: string}}
+      responses:
+        '200': {description: Up to 50 observations with evidence and next page cursor}
+        '400': {description: Invalid cursor}
+        '401': {description: Invalid operator credentials}
+        '503': {description: Storage unavailable}
   /v1/windows:
     post:
       summary: Atomic window delivery contract
@@ -113,6 +150,7 @@ paths:
                   next: {type: string, description: Empty on last page}
                   pending: {type: boolean}
                   retrying: {type: boolean}
+                  failed: {type: boolean, description: A terminal inference error was recorded}
         '400': {description: Invalid filter or cursor}
         '401': {description: Operator credentials required}
         '503': {description: Storage unavailable}

@@ -93,7 +93,8 @@ def main():
         run(['docker', 'run', '--rm', '--network', 'none', '--cap-drop', 'ALL',
              '--group-add', str(os.getgid()), '-v', f'{output}:/output', 'netwatch-sensor:dev', 'replay',
              '--input', '/output/live.pcap', '--output', '/output/offline.jsonl',
-             '--service', env['NETWATCH_SERVICE'], '--epoch', started['epoch']])
+             '--service', env['NETWATCH_SERVICE'], '--epoch', started['epoch'],
+             '--coverage-start',started['start_ns'],'--coverage-end',stopped['end_ns']])
         # Native Linux preserves UID 0 and mode 0600 of sensor output. Read it
         # through a read-only mount, without making packet artifacts world-readable.
         def windows(name):

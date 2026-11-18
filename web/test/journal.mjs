@@ -16,6 +16,10 @@ try {
     })
     .first();
   await card.waitFor();
+  await page
+    .getByText(/packet_flood/)
+    .first()
+    .waitFor();
   // Navigate from the first filter through the journal using the keyboard.
   await page.getByLabel("Объект", { exact: true }).focus();
   for (
@@ -51,9 +55,15 @@ try {
         process.env.NETWATCH_UI_CLASSIFIER,
       );
       assert(
-        ["benign", "foreground_pause", "unknown", "large_upload", "large_response", "connection_surge", "persistent_exchange"].includes(
-          e.prediction.classification.label,
-        ),
+        [
+          "benign",
+          "foreground_pause",
+          "unknown",
+          "large_upload",
+          "large_response",
+          "connection_surge",
+          "persistent_exchange",
+        ].includes(e.prediction.classification.label),
       );
     }
     await page

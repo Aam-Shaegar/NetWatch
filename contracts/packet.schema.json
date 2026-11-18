@@ -87,6 +87,7 @@
       "minimum": 0,
       "maximum": 4294967295
     },
+    "header_complete": {"type":"boolean"},
     "tcp_flags": {
       "type": "integer",
       "minimum": 0,

@@ -21,3 +21,10 @@ Prediction normal/anomalous needs finite nonnull score and threshold; other stat
 Unknown properties and future schema versions are rejected, not silently accepted.
 
 The example host window represents the two SYN packets in `tests/fixtures/pcap/syn-retry.pcap`: one flow, one attempt, 80 outbound IP bytes and SYN fraction 1. Its declared complete coverage describes a controlled 5 s observation, not evidence of coverage inferred from the file boundary.
+
+When continuous capture is verified, every fully covered five-second interval
+has a window, including zero traffic. Statistical quantities without samples
+remain null. Live capture advances the watermark on read timeouts. Capture
+loss is attributed to windows intersecting the interval between stats polls.
+Late packets increment the epoch total and flag their still-open window, or
+the first open window if their original window has already been published.

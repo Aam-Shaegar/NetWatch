@@ -515,6 +515,13 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	down3, err := migrations.Files.ReadFile("000003_security.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, string(down3)); err != nil {
+		t.Fatal(err)
+	}
 	down2, err := migrations.Files.ReadFile("000002_incidents.down.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -525,7 +532,7 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	if _, err = tx.Exec(ctx, string(down)); err != nil {
 		t.Fatal(err)
 	}
-	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2)`)
+	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2,3)`)
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -689,5 +696,40 @@ func TestIncidentProjectionInEventOrder(t *testing.T) {
 	var actor string
 	if err = db.Pool.QueryRow(ctx, "SELECT ack_by FROM incidents WHERE id=$1", id).Scan(&actor); err != nil || actor != "first" {
 		t.Fatal(actor, err)
+	}
+}
+
+func TestPermanentErrorAllowsFollowingPredictions(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	now := time.Now()
+	ingest(t, db, window(t, "incompatible", now.Add(-10*time.Second)))
+	ml := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "incompatible_model_or_policy"})
+	}))
+	defer ml.Close()
+	worker := newWorker(t, db, ml.URL)
+	if _, err := worker.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ingest(t, db, window(t, "second", now.Add(-5*time.Second)), window(t, "third", now))
+	var calls atomic.Int32
+	healthy := model(t, &calls)
+	worker = newWorker(t, db, healthy.URL)
+	for range 2 {
+		if _, err := worker.Once(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Project(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if count(t, db, "incident_queue") != 0 || count(t, db, "predictions") != 3 {
+		t.Fatal("stream stalled")
+	}
+	var reason string
+	if err := db.Pool.QueryRow(ctx, "SELECT payload->>'reason' FROM predictions WHERE event_id='incompatible'").Scan(&reason); err != nil || reason != "incompatible_model_or_policy" {
+		t.Fatal(reason, err)
 	}
 }

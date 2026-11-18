@@ -58,7 +58,8 @@ def native_smoke(root, container, env, run, window_path, model_config, journal, 
                       NETWATCH_LISTEN=f'127.0.0.1:{api_port}',
                       NETWATCH_SENSOR_TOKENS=json.dumps({scope: secret}),
                       NETWATCH_SENSOR_TOKEN=secret, NETWATCH_MODEL_ID='pending-model',
-                      NETWATCH_ML_ENDPOINT=f'http://127.0.0.1:{ml_port}/v1/predict')
+                      NETWATCH_ML_ENDPOINT=f'http://127.0.0.1:{ml_port}/v1/predict',
+                      NETWATCH_SECURITY_ENDPOINT=f'http://127.0.0.1:{ml_port}/v1/security/assess')
     for key in ('NETWATCH_MODEL_BUNDLE', 'NETWATCH_MODEL_SHA256'):
         native_env.pop(key, None)
     if model_config:
@@ -98,6 +99,30 @@ def native_smoke(root, container, env, run, window_path, model_config, journal, 
                     time.sleep(0.1)
                 else:
                     raise RuntimeError('native API/ML startup failed')
+                if journal:
+                    # Offline fixture only. Its declared empty calibration minutes and
+                    # repeated packet provide a deterministic positive journal entry.
+                    import struct
+                    capture = (root / 'tests/fixtures/pcap/syn-retry.pcap').read_bytes()
+                    order = '<' if capture[:4] == bytes.fromhex('d4c3b2a1') else '>'
+                    size, wire = struct.unpack_from(order + 'II', capture, 32)
+                    frame = capture[40:40+size]
+                    record = struct.pack(order + 'IIII', 305, 0, size, wire) + frame
+                    fixture = temp / 'journal.pcap'
+                    fixture.write_bytes(capture[:24] + record * 550)
+                    metadata = temp / 'packets.jsonl'
+                    execute([str(temp/'netwatch-sensor'),'replay','--input',str(fixture),'--output',str(metadata)])
+                    entity=json.loads(metadata.read_text().splitlines()[0])['dst_ip']
+                    args=[str(root/'ml/.venv/bin/python'),'-m','netwatch_ml.security_import',
+                          '--journal',f'http://127.0.0.1:{api_port}','packets',str(metadata),
+                          '--entity',entity,'--start','300','--reference',str(metadata),
+                          '--reference-start','0','--reference-minutes','5','--complete-minutes']
+                    execute(args)
+                    execute(args)
+                    operator=next(iter(json.loads(native_env['NETWATCH_OPERATOR_TOKENS']).values()))
+                    status, page=get(f'http://127.0.0.1:{api_port}/v1/security/observations',operator)
+                    assert status==200 and len(page['observations'])==1
+                    assert page['observations'][0]['assessment']['findings'][0]['label']=='packet_flood'
                 if experiment:
                     launch([str(temp / 'netwatch-worker')])
                     return experiment(container, native_env, get)

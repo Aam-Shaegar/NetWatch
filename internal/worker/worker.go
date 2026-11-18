@@ -90,6 +90,14 @@ func (w *Worker) Infer(ctx context.Context, j store.Job) (contract.Prediction, e
 		return contract.Prediction{}, fmt.Errorf("ml_connection_or_timeout")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 409 || resp.StatusCode == 422 {
+		var rejected struct{ Error string }
+		raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1025))
+		if readErr == nil && len(raw) <= 1024 && json.Unmarshal(raw, &rejected) == nil &&
+			(resp.StatusCode == 409 && rejected.Error == "incompatible_model_or_policy" || resp.StatusCode == 422 && rejected.Error == "invalid_inference_request") {
+			return contract.Prediction{SchemaVersion: 1, FeatureSetVersion: "traffic-v1", ModelID: j.ModelID, EventID: j.EventID, Status: "error", Reason: rejected.Error}, nil
+		}
+	}
 	if resp.StatusCode != 200 {
 		return contract.Prediction{}, fmt.Errorf("ml_http_%d", resp.StatusCode)
 	}

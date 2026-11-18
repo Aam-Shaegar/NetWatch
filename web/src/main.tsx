@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
+import { Observations } from "./Observations";
 
 type Incident = {
   id: string;
@@ -140,7 +141,11 @@ function App() {
     [cardError, setCardError] = useState(""),
     [busy, setBusy] = useState(false),
     [acting, setActing] = useState(false);
-  const [pipeline, setPipeline] = useState({ pending: false, retrying: false });
+  const [pipeline, setPipeline] = useState({
+    pending: false,
+    retrying: false,
+    failed: false,
+  });
   const action = useRef<AbortController | null>(null);
   const request = async (path: string, signal: AbortSignal, method = "GET") => {
     const res = await fetch(path, {
@@ -171,7 +176,11 @@ function App() {
         if (!ac.signal.aborted) {
           setItems(d.incidents);
           setNext(d.next);
-          setPipeline({ pending: d.pending, retrying: d.retrying });
+          setPipeline({
+            pending: d.pending,
+            retrying: d.retrying,
+            failed: d.failed,
+          });
         }
       })
       .catch((e) => {
@@ -322,6 +331,12 @@ function App() {
               Выйти
             </button>
           </nav>
+          {!busy && !listError && pipeline.failed && (
+            <p role="status">
+              Есть окна без оценки из-за несовместимой модели или неверного
+              запроса.
+            </p>
+          )}
           {!busy && !listError && pipeline.pending && (
             <p role="status">
               {pipeline.retrying
@@ -375,6 +390,12 @@ function App() {
               </button>
             )}
           </section>
+          <Observations
+            key={filter}
+            token={token}
+            entity={new URLSearchParams(filter).get("entity") || ""}
+            revision={rev}
+          />
           {cardError && <p role="alert">{cardError}</p>}
           {selected && !card && !cardError && (
             <p role="status">Загрузка карточки…</p>

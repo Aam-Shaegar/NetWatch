@@ -121,8 +121,11 @@ def read_run(folder, sensor, scratch):
         raise ValueError('empty capture')
     epoch = rows[0]['capture_epoch']
     replay = scratch / (folder.name + '.jsonl')
+    coverage = []
+    if m.get('capture', {}).get('start_ns') and m['capture'].get('end_ns'):
+        coverage = ['--coverage-start', m['capture']['start_ns'], '--coverage-end', m['capture']['end_ns']]
     subprocess.run([str(sensor), 'replay', '--input', str(capture), '--output', str(replay),
-                    '--service', m['service'], '--epoch', epoch, '--sensor', rows[0]['sensor_id']],
+                    '--service', m['service'], '--epoch', epoch, '--sensor', rows[0]['sensor_id'], *coverage],
                    check=True, capture_output=True, timeout=180)
     reference = {row['event_id']: row for row in json_lines(replay)}
     results = []

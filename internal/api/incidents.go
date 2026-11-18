@@ -52,6 +52,26 @@ func incidentRoutes(mux *http.ServeMux, c Config) {
 		}
 		return v, e
 	}
+	mux.HandleFunc("GET /v1/security/observations", protect(func(w http.ResponseWriter, r *http.Request, _ string) {
+		before, err := number(r, "before", 0)
+		if err != nil {
+			bad(w)
+			return
+		}
+		items, err := c.Store.Assessments(r.Context(), before, r.URL.Query().Get("entity"))
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		var next string
+		if len(items) > 50 {
+			items = items[:50]
+			var last struct{ ID string }
+			json.Unmarshal(items[49], &last)
+			next = last.ID
+		}
+		sendJSON(w, 200, map[string]any{"observations": items, "next": next})
+	}))
 	mux.HandleFunc("GET /v1/incidents", protect(func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()
 		f := store.IncidentFilter{Entity: q.Get("entity"), Model: q.Get("model")}
@@ -84,7 +104,12 @@ func incidentRoutes(mux *http.ServeMux, c Config) {
 			failure(w, err)
 			return
 		}
-		sendJSON(w, 200, map[string]any{"incidents": items, "next": next, "pending": pending, "retrying": retrying})
+		var failed bool
+		if err := c.Store.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM predictions WHERE payload->>'reason' IS NOT NULL)`).Scan(&failed); err != nil {
+			failure(w, err)
+			return
+		}
+		sendJSON(w, 200, map[string]any{"failed": failed, "incidents": items, "next": next, "pending": pending, "retrying": retrying})
 	}))
 	mux.HandleFunc("GET /v1/incidents/{id}", protect(func(w http.ResponseWriter, r *http.Request, _ string) {
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

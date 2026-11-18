@@ -28,6 +28,7 @@ type Classification struct {
 }
 
 type Prediction struct {
+	Reason         string          `json:"reason,omitempty"`
 	Classification *Classification `json:"classification,omitempty"`
 
 	SchemaVersion     int      `json:"schema_version"`

@@ -22,21 +22,34 @@ def _packet_minutes(lines, entity, start, minutes):
     count_bins = [Counter() for _ in range(minutes)]
     bursts = [BurstRates() for _ in range(minutes)]
     handshakes = [Handshakes() for _ in range(minutes)]
+    # Follow pending attempts for up to five seconds into the next interval.
+    grace = 5_000_000_000
+    boundary_attempts = [set() for _ in range(minutes)]
     for line in lines:
         packet = json.loads(line)
-        if not lower <= int(packet["timestamp_ns"]) < upper:
+        stamp = int(packet["timestamp_ns"])
+        if not lower <= stamp < upper + grace:
             continue
         if packet["decode_status"] == "non_ip":
             continue
-        if packet["decode_status"] != "decoded":
+        if packet["decode_status"] not in ("decoded", "fragment") and not (
+            packet["decode_status"] == "truncated"
+            and packet.get("header_complete") is True
+        ):
+            if stamp >= upper:
+                continue
             raise ValueError("incomplete decoding in declared interval")
         index = (int(packet["timestamp_ns"]) - lower) // width
+        if packet["decode_status"] == "fragment" and (
+            not packet["dst_ip"] or not packet["src_ip"] or ":" in packet["src_ip"]
+        ):
+            raise ValueError("fragment lacks verified IPv4 transport protocol")
         inbound = ipaddress.ip_address(packet["dst_ip"]) == target
         if packet["protocol"] == "TCP" and (
             inbound or ipaddress.ip_address(packet["src_ip"]) == target
         ):
             peer_side, local_side = ("src", "dst") if inbound else ("dst", "src")
-            handshakes[index].observe(
+            args = (
                 inbound,
                 packet[peer_side + "_ip"],
                 packet.get(peer_side + "_port"),
@@ -45,17 +58,32 @@ def _packet_minutes(lines, entity, start, minutes):
                 packet.get("tcp_seq"),
                 packet.get("tcp_ack"),
             )
-        if not inbound:
+            flags, seq = args[-3:-1]
+            flow = (args[1:4], seq)
+            opening = flags is not None and inbound and flags & 0x16 == 2
+            repeated = False
+            previous = index - 1
+            if previous >= 0 and stamp < lower + index * width + grace:
+                prior = handshakes[previous]
+                if not opening:
+                    prior.observe(*args)
+                elif flow in prior.attempts and flow not in prior.completed:
+                    repeated = True
+            if index < minutes and not repeated:
+                handshakes[index].observe(*args)
+                if opening and stamp + grace >= upper:
+                    boundary_attempts[index].add(flow)
+        if index >= minutes or not inbound:
             continue
-        bursts[index].add(
-            int(packet["timestamp_ns"]) // 1_000_000_000, packet["protocol"]
-        )
+        bursts[index].add((stamp - lower) // 1_000_000_000, packet["protocol"])
         count_bins[index][packet["protocol"]] += 1
         peer = port_bins[index][packet["src_ip"]]
         if packet["dst_port"] is not None:
             peer.add(packet["dst_port"])
     samples = []
-    for counts, ports, tcp, burst in zip(count_bins, port_bins, handshakes, bursts):
+    for counts, ports, tcp, burst, pending in zip(
+        count_bins, port_bins, handshakes, bursts, boundary_attempts
+    ):
         total = counts.total()
         metrics = dict(
             in_pps=total / 60,
@@ -67,6 +95,8 @@ def _packet_minutes(lines, entity, start, minutes):
                 udp_fraction=counts["UDP"] / total, icmp_fraction=counts["ICMP"] / total
             )
         metrics.update(tcp.metrics())
+        if pending - tcp.completed:
+            metrics.pop("handshake_fraction", None)
         metrics.update(burst.metrics())
         samples.append(metrics)
     return samples
@@ -188,6 +218,9 @@ def from_events(lines, entity, start, kind, auth_history=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--journal", help="Authenticated NetWatch API URL, e.g. http://127.0.0.1:8080"
+    )
     sub = parser.add_subparsers(dest="kind", required=True)
     for kind in ("packets", "waf", "observation", "auth", "dns", "egress"):
         cmd = sub.add_parser(kind)
@@ -237,7 +270,46 @@ def main():
             observation = from_waf(json.load(stream), args.entity, args.start)
         else:
             observation = json.load(stream)
-    print(json.dumps(assess(observation), ensure_ascii=False, indent=2))
+    if args.journal:
+        import os
+        from urllib.parse import urlsplit
+        from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+        endpoint = urlsplit(args.journal)
+        if (
+            endpoint.username
+            or endpoint.password
+            or endpoint.query
+            or endpoint.fragment
+            or not (
+                endpoint.scheme == "https"
+                and endpoint.hostname
+                or endpoint.scheme == "http"
+                and endpoint.hostname in {"localhost", "127.0.0.1", "::1"}
+            )
+        ):
+            parser.error("journal requires HTTPS or a loopback HTTP endpoint")
+        token = os.getenv("NETWATCH_SENSOR_TOKEN")
+        if not token:
+            parser.error("NETWATCH_SENSOR_TOKEN is required")
+
+        class NoRedirect(HTTPRedirectHandler):
+            def redirect_request(self, *args):
+                return None
+
+        req = Request(
+            args.journal.rstrip("/") + "/v1/security/assess",
+            data=json.dumps(observation).encode(),
+            headers={
+                "Authorization": "Bearer " + token,
+                "Content-Type": "application/json",
+            },
+        )
+        with build_opener(NoRedirect).open(req, timeout=15) as response:
+            result = json.load(response)
+    else:
+        result = assess(observation)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

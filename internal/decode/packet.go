@@ -14,29 +14,35 @@ const (
 
 // Meta follows contracts/packet.schema.json. Null ports mean not observed.
 type Meta struct {
-	Version   int     `json:"schema_version"`
-	Sensor    string  `json:"sensor_id"`
-	Interface string  `json:"interface_id"`
-	Timestamp string  `json:"timestamp_ns"`
-	Src       string  `json:"src_ip"`
-	Dst       string  `json:"dst_ip"`
-	Protocol  string  `json:"protocol"`
-	SrcPort   *uint16 `json:"src_port"`
-	DstPort   *uint16 `json:"dst_port"`
-	IPLength  int     `json:"ip_length"`
-	Status    string  `json:"decode_status"`
-	Captured  int     `json:"captured_length"`
-	Wire      int     `json:"wire_length"`
-	TCPFlags  *uint8  `json:"tcp_flags,omitempty"`
-	TCPSeq    *uint32 `json:"tcp_seq,omitempty"`
-	TCPAck    *uint32 `json:"tcp_ack,omitempty"`
+	HeaderComplete bool    `json:"header_complete,omitempty"`
+	Version        int     `json:"schema_version"`
+	Sensor         string  `json:"sensor_id"`
+	Interface      string  `json:"interface_id"`
+	Timestamp      string  `json:"timestamp_ns"`
+	Src            string  `json:"src_ip"`
+	Dst            string  `json:"dst_ip"`
+	Protocol       string  `json:"protocol"`
+	SrcPort        *uint16 `json:"src_port"`
+	DstPort        *uint16 `json:"dst_port"`
+	IPLength       int     `json:"ip_length"`
+	Status         string  `json:"decode_status"`
+	Captured       int     `json:"captured_length"`
+	Wire           int     `json:"wire_length"`
+	TCPFlags       *uint8  `json:"tcp_flags,omitempty"`
+	TCPSeq         *uint32 `json:"tcp_seq,omitempty"`
+	TCPAck         *uint32 `json:"tcp_ack,omitempty"`
 }
 
-func Packet(frame []byte, link int, ns int64, sensor, iface string, wire int) Meta {
-	m := Meta{Version: 1, Sensor: sensor, Interface: iface, Timestamp: strconv.FormatInt(ns, 10), Protocol: "OTHER", Status: "malformed", Captured: len(frame), Wire: wire}
+func Packet(frame []byte, link int, ns int64, sensor, iface string, wire int) (m Meta) {
+	m = Meta{Version: 1, Sensor: sensor, Interface: iface, Timestamp: strconv.FormatInt(ns, 10), Protocol: "OTHER", Status: "malformed", Captured: len(frame), Wire: wire}
+	// Transport fields are usable when snaplen omitted only payload.
 	if len(frame) < wire {
-		m.Status = "truncated"
-		return m
+		defer func() {
+			if m.Status != "non_ip" && m.Status != "fragment" {
+				m.HeaderComplete = m.Status == "decoded"
+				m.Status = "truncated"
+			}
+		}()
 	}
 	switch link {
 	case Ethernet:
@@ -88,15 +94,34 @@ func (m *Meta) ipv4(p []byte) {
 	m.IPLength = total
 	m.Src = netip.AddrFrom4([4]byte(p[12:16])).String()
 	m.Dst = netip.AddrFrom4([4]byte(p[16:20])).String()
-	if len(p) < total {
+	if len(p) < total && (m.Wire-m.Captured < total-len(p)) {
 		m.Status = "truncated"
 		return
 	}
-	if binary.BigEndian.Uint16(p[6:8])&0x3fff != 0 {
+	if fragment := binary.BigEndian.Uint16(p[6:8]); fragment&0x3fff != 0 {
+		if len(p) < h {
+			return
+		}
 		m.Status = "fragment"
+		switch p[9] {
+		case 6:
+			m.Protocol = "TCP"
+		case 17:
+			m.Protocol = "UDP"
+		case 1:
+			m.Protocol = "ICMP"
+		}
+		// Only fragment zero starts with the transport header.
+		if fragment&0x1fff == 0 && (p[9] == 6 || p[9] == 17) && min(len(p), total)-h >= 4 {
+			src, dst := binary.BigEndian.Uint16(p[h:]), binary.BigEndian.Uint16(p[h+2:])
+			m.SrcPort, m.DstPort = &src, &dst
+		}
 		return
 	}
-	m.transport(p[9], p[h:total])
+	if len(p) < h {
+		return
+	}
+	m.transport(p[9], p[h:min(len(p), total)], total-h)
 }
 func (m *Meta) ipv6(p []byte) {
 	if len(p) < 40 {
@@ -106,12 +131,13 @@ func (m *Meta) ipv6(p []byte) {
 	m.IPLength = total
 	m.Src = netip.AddrFrom16([16]byte(p[8:24])).String()
 	m.Dst = netip.AddrFrom16([16]byte(p[24:40])).String()
-	if len(p) < total {
+	if len(p) < total && (m.Wire-m.Captured < total-len(p)) {
 		m.Status = "truncated"
 		return
 	}
 	next := p[6]
-	body := p[40:total]
+	body := p[40:min(len(p), total)]
+	remaining := total - 40
 	for n := 0; n < 16; n++ {
 		switch next {
 		case 44:
@@ -128,14 +154,15 @@ func (m *Meta) ipv6(p []byte) {
 			if length > len(body) {
 				return
 			}
+			remaining -= length
 			next, body = body[0], body[length:]
 		default:
-			m.transport(next, body)
+			m.transport(next, body, remaining)
 			return
 		}
 	}
 }
-func (m *Meta) transport(proto byte, p []byte) {
+func (m *Meta) transport(proto byte, p []byte, declared int) {
 	switch proto {
 	case 6:
 		if len(p) < 20 {
@@ -157,7 +184,7 @@ func (m *Meta) transport(proto byte, p []byte) {
 			return
 		}
 		length := int(binary.BigEndian.Uint16(p[4:6]))
-		if length < 8 || length > len(p) {
+		if length < 8 || length > declared {
 			return
 		}
 		m.Protocol = "UDP"

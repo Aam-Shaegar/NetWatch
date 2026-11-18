@@ -52,3 +52,26 @@ func TestWindowReplayGolden(t *testing.T) {
 		t.Fatal("published failed replay")
 	}
 }
+
+func TestVerifiedSilence(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "quiet.jsonl")
+	err := replay(context.Background(), []string{"--input", "../../tests/fixtures/pcap/syn-retry.pcap", "--output", out, "--epoch", "q", "--host", "192.0.2.55", "--coverage-start", "1700000000000000000", "--coverage-end", "1700000030000000000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	d := json.NewDecoder(file)
+	for i := 0; i < 6; i++ {
+		var w contract.Window
+		if d.Decode(&w) != nil || w.Quality.Coverage != "complete" || *w.Features["in_packets"] != 0 || w.Features["mean_packet_size"] != nil {
+			t.Fatal(i, w)
+		}
+	}
+	if d.More() {
+		t.Fatal("extra window")
+	}
+}

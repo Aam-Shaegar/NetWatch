@@ -14,7 +14,7 @@ import (
 )
 
 func Validate(kind string, data []byte) error {
-	kinds := []string{"window", "prediction", "packet", "batch", "ack", "rejection", "inference-request", "inference-response"}
+	kinds := []string{"window", "prediction", "packet", "batch", "ack", "rejection", "inference-request", "inference-response", "security-observation", "security-assessment"}
 	known := false
 	for _, name := range kinds {
 		if kind == name {
