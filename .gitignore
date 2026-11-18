@@ -41,3 +41,5 @@ NetWatch-построчный-разбор.md
 # Durable sensor state (windows and local health metadata)
 /data/spool/
 *.seg
+
+/data/holdout/

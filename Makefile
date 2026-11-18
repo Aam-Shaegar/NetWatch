@@ -6,7 +6,7 @@ help:
 	@echo "Services:   db-up db-down migrate api worker ml web"
 	@echo "Capture:    lab-up lab-down lab-smoke live-smoke fixtures"
 	@echo "Models:     collect dataset train compare"
-	@echo "Checks:     collection-smoke server-smoke spool-disk-smoke bench operations"
+	@echo "Checks:     collection-smoke server-smoke spool-disk-smoke bench operations test-anomalies"
 configure:
 	python3 scripts/configure.py
 bootstrap:
@@ -93,3 +93,13 @@ operations:
 
 spool-disk-smoke:
 	python3 scripts/spool_disk_smoke.py
+
+.PHONY: test-anomalies
+ANOMALY_MANIFEST ?= data/holdout/anomalies/manifest.json
+ANOMALY_SERVICE ?= artifacts/tcp-service-patterns-v2
+ANOMALY_FORECAST ?= artifacts/step10-gru
+ANOMALY_TRAINING ?= data/processed/step7-16d38550a4d3/manifest.json
+ANOMALY_REPORT ?= outputs/anomaly-holdout.json
+
+test-anomalies:
+	$(UV) run --project ml --locked python benchmarks/independent.py "$(ANOMALY_MANIFEST)" "$(ANOMALY_SERVICE)" "$(ANOMALY_FORECAST)" "$(ANOMALY_TRAINING)" "$(ANOMALY_REPORT)"
