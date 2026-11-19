@@ -26,10 +26,43 @@
     "interval_s": {
       "const": 60
     },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cohort", "observers"],
+      "properties": {
+        "cohort": {"type": "string", "minLength": 1, "maxLength": 200},
+        "observers": {
+          "type": "object",
+          "propertyNames": {"enum": ["network", "probe", "http", "auth", "headers", "dlp", "process", "ingress", "gateway", "tls", "change"]},
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["coverage", "expected_change", "policy_valid_until_s"],
+            "properties": {
+              "coverage": {"enum": ["complete", "partial", "missing"]},
+              "expected_change": {"type": "boolean"},
+              "policy_valid_until_s": {"type": ["integer", "null"], "minimum": 0, "maximum": 9007199254740991}
+            }
+          }
+        }
+      }
+    },
     "metrics": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "dns_queries_5m": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "dns_unique_label_fraction_5m": {"type": "number", "minimum": 0, "maximum": 1},
+        "dns_mean_label_length_5m": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+        "outbound_intervals_5m": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "interval_cv_5m": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+        "dns_queries_15m": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "dns_unique_label_fraction_15m": {"type": "number", "minimum": 0, "maximum": 1},
+        "dns_mean_label_length_15m": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+        "outbound_intervals_15m": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "interval_cv_15m": {"type": "number", "minimum": 0, "maximum": 9007199254740991},
+        "handshake_fraction_upper": {"type": "number", "minimum": 0, "maximum": 1},
         "auth_failure_fraction": {
           "type": "number",
           "minimum": 0,

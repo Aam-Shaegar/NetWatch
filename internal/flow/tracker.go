@@ -24,6 +24,9 @@ type State struct {
 	Attempts     uint64
 	Established  uint64
 	ClosedBy     string // "fin" after both FINs, "rst" on a reset
+	started      int64
+	startKnown   bool
+	incarnation  uint64
 	syn          [2]*uint32
 	reply        [2]*uint32 // responder sequence indexed by opening SYN side
 	fin          [2]bool
@@ -116,6 +119,10 @@ func (t *Tracker) Observe(p decode.Meta) (state *State, repeated bool) {
 		if prev := state.syn[side]; prev != nil && *prev == seq {
 			return state, true
 		}
+		if !state.startKnown || state.syn[side] != nil {
+			state.started, state.startKnown = ns, true
+			state.incarnation++
+		}
 		state.syn[side], state.reply[side] = &seq, nil
 		state.Attempts++
 	}
@@ -144,6 +151,12 @@ func (t *Tracker) Observe(p decode.Meta) (state *State, repeated bool) {
 		}
 	}
 	return state, false
+}
+
+// TCPStart reports the observed opening SYN time. A capture beginning
+// midstream or resuming after idle expiry cannot establish the original age.
+func (s *State) TCPStart() (at int64, incarnation uint64, known bool) {
+	return s.started, s.incarnation, s.startKnown
 }
 
 // Changes describes events observed in this packet, including a new incarnation.

@@ -22,7 +22,17 @@ def test_missing_service_health_does_not_confirm_ddos():
     assert [f["label"] for f in first["findings"]] == ["packet_flood"]
     assert "unavailable_fraction" in first["unassessed"]["ddos"]
     obs["metrics"]["unavailable_fraction"] = 0.4
+    assert "fresh_correlated_telemetry" in get()["unassessed"]["ddos"]
+    observer = dict(coverage="complete", expected_change=False, policy_valid_until_s=60)
+    obs["correlation"] = dict(
+        cohort="site-v1",
+        observers={key: dict(observer) for key in ("network", "probe", "change")},
+    )
     assert {f["label"] for f in get()["findings"]} == {"dos", "ddos", "packet_flood"}
+    obs["correlation"]["observers"]["change"]["expected_change"] = True
+    assert {f["label"] for f in get()["findings"]} == {"packet_flood"}
+    obs["correlation"]["observers"]["change"]["policy_valid_until_s"] = 59
+    assert "policy_freshness" in get()["unassessed"]["ddos"]
     obs["metrics"]["unavailable_fraction"] = 1.3
     assert client.post("/v1/security/assess", json=obs).status_code == 422
 
@@ -95,7 +105,9 @@ def test_udp_burst_needs_protocol_dominance_in_the_same_bin():
         burst = BurstRates()
         for i in range(600):
             burst.add(5, "UDP" if i < n_udp else "TCP")
-        normal = BurstRates().metrics()
+        baseline = BurstRates()
+        baseline.add(5, "UDP")
+        normal = baseline.metrics()
         return {
             f["label"]
             for f in assess(
@@ -160,7 +172,16 @@ def test_packet_import_applies_history_before_assessing_burst():
         protocol="UDP",
         decode_status="decoded",
     )
-    observation = from_packets([json.dumps(record)] * 550, [], "192.0.2.1", 300, 0, 5)
+    source = [json.dumps(record)] * 550
+    quiet = from_packets(source, [], "192.0.2.1", 300, 0, 5)
+    assert all(
+        f["basis"] == "burst_with_silent_reference" for f in assess(quiet)["findings"]
+    )
+    reference = [
+        json.dumps(dict(record, timestamp_ns=str((minute * 60 + 1) * 10**9)))
+        for minute in range(5)
+    ]
+    observation = from_packets(source, reference, "192.0.2.1", 300, 0, 5)
     assert observation["metrics"]["peak_udp_pps_5s"] == 110
     assert {f["label"] for f in assess(observation)["findings"]} == {
         "packet_flood",
@@ -199,6 +220,8 @@ def test_minute_boundary_and_censored_handshake():
     ]
     assert packet_metrics(packets, "192.0.2.2", 0)["handshake_fraction"] == 1
     assert "handshake_fraction" not in packet_metrics(packets[:1], "192.0.2.2", 0)
+    assert packet_metrics(packets[:1], "192.0.2.2", 0)["handshake_fraction_upper"] == 1
+
     assert packet_metrics(packets, "192.0.2.2", 0)["in_pps"] == 1 / 60
 
 
@@ -221,3 +244,171 @@ def test_shifted_packet_interval_separates_first_and_last_seconds():
     for start in (0, 2, 59):
         packets = [record(start)] * 50 + [record(start + 59)] * 50
         assert packet_metrics(packets, "192.0.2.2", start)["peak_pps_5s"] == 10
+
+
+def test_export_requires_same_minute_and_cohort():
+    import pytest
+    from netwatch_ml.telemetry import combine
+
+    base = dict(
+        entity="https-service",
+        start_s=0,
+        cohort="scope-1",
+        coverage="complete",
+        expected_change=False,
+        policy_valid_until_s=60,
+    )
+    network = dict(
+        base, source="network", metrics={"source_ips": 18, "pps_baseline_ratio": 10}
+    )
+    probe = dict(base, source="probe", metrics={"unavailable_fraction": 0.5})
+    change = dict(base, source="change", metrics={})
+    assert (
+        combine([network, probe, change], "https-service", 0)["correlation"]["cohort"]
+        == "scope-1"
+    )
+    with pytest.raises(ValueError, match="cohorts"):
+        combine([network, dict(probe, cohort="other")], "https-service", 0)
+    with pytest.raises(ValueError, match="scope"):
+        combine([network, dict(probe, start_s=60)], "https-service", 0)
+
+
+def test_history_keeps_sparse_periodic_evidence_within_the_same_scope():
+    import json
+    from netwatch_ml.security import assess
+    from netwatch_ml.security_import import from_events
+
+    rows = [
+        dict(entity="service:peer", time_s=timestamp, unapproved_destination=True)
+        for timestamp in range(10, 300, 28)
+    ]
+    one = from_events(map(json.dumps, rows), "service:peer", 240, "egress")
+    assert assess(one)["findings"] == []
+    history = from_events(
+        map(json.dumps, rows), "service:peer", 240, "egress", history_minutes=5
+    )
+    findings = assess(history)["findings"]
+    assert "outbound_intervals_5m" in findings[0]["evidence"]
+
+
+def test_censored_syn_is_reported_only_when_upper_bound_is_conclusive():
+    from netwatch_ml.security import assess
+
+    obs = dict(
+        schema_version=1,
+        entity="service",
+        start_s=0,
+        interval_s=60,
+        metrics=dict(
+            syn_per_second=30, syn_rate_ratio=10, handshake_fraction_upper=0.1
+        ),
+    )
+    signal = next(row for row in assess(obs)["findings"] if row["label"] == "syn_flood")
+    assert signal["evidence"]["handshake_fraction_upper"] == 0.1
+    obs["metrics"]["handshake_fraction_upper"] = 0.6
+    assert "syn_flood" in assess(obs)["unassessed"]
+
+
+def test_confirmed_silence_excludes_traffic_pressure_without_fabricating_probe_results():
+    from netwatch_ml.security import assess
+
+    obs = dict(
+        schema_version=1,
+        entity="service",
+        start_s=0,
+        interval_s=60,
+        metrics={"in_pps": 0},
+    )
+    result = assess(obs)
+    assert not ({"dos", "ddos"} & result["unassessed"].keys())
+    assert not result["findings"]
+    obs["metrics"].clear()
+    assert {"dos", "ddos"} <= assess(obs)["unassessed"].keys()
+
+
+def test_probe_coverage_requires_one_outcome_per_scheduled_sample():
+    import pytest
+    from netwatch_ml.telemetry import probe_summary
+
+    schedule = [dict(id="opening", time_s=1), dict(id="closing", time_s=30)]
+    good = dict(
+        id="opening", time_s=1.2, entity="service", cohort="site", available=True
+    )
+    bad = dict(
+        id="closing", time_s=31, entity="service", cohort="site", available=False
+    )
+    partial = probe_summary(schedule, [good], "service", 0, "site", 60)
+    assert partial["coverage"] == "partial"
+    assert partial["metrics"] == {}
+    full = probe_summary(schedule, [good, bad], "service", 0, "site", 60)
+    assert full["coverage"] == "complete"
+    assert full["metrics"] == {"unavailable_fraction": 0.5}
+    with pytest.raises(ValueError, match="scope"):
+        probe_summary(
+            schedule, [good, dict(bad, entity="another")], "service", 0, "site", 60
+        )
+
+
+def test_http_load_and_measured_degradation_are_separate_from_security_indicators():
+    import pytest
+    from netwatch_ml.security import assess
+    from netwatch_ml.telemetry import combine, http_summary, observer
+
+    def http_window(start, count, status):
+        return dict(
+            entity="service",
+            cohort="scope",
+            start_s=start,
+            complete=True,
+            events=[
+                dict(id=str(i), client=str(i), time_s=start, status=status)
+                for i in range(count)
+            ],
+        )
+
+    args = ("service", 60, "scope")
+    ordinary = [http_window(0, 4, 200)]
+    health = observer(*args, "probe", {"unavailable_fraction": 0}, 120)
+    unavailable = observer(*args, "probe", {"unavailable_fraction": 0.5}, 120)
+    change = observer(*args, "change", {}, 120)
+    busy = http_summary(http_window(60, 20, 200), ordinary, *args, 120)
+    errors = http_summary(http_window(60, 20, 503), ordinary, *args, 120)
+    missing = assess(combine([busy, change], "service", 60))
+    assert missing["availability"] == "unmeasured"
+    assert [(f["label"], f["kind"]) for f in missing["findings"]] == [
+        ("http_load", "traffic_pattern")
+    ]
+    healthy = assess(combine([errors, health, change], "service", 60))
+    assert healthy["availability"] == "reachable"
+    assert {f["label"] for f in healthy["findings"]} == {"http_load"}
+    outage = assess(combine([errors, unavailable, change], "service", 60))
+    assert outage["availability"] == "degraded"
+    assert {f["label"]: f["kind"] for f in outage["findings"]} == {
+        "http_load": "traffic_pattern",
+        "web_ddos": "degradation_pattern",
+    }
+    no_probe = assess(combine([errors, change], "service", 60))
+    assert "unavailable_fraction" in no_probe["unassessed"]["web_ddos"]
+    planned = dict(change, expected_change=True)
+    maintenance = assess(combine([errors, unavailable, planned], "service", 60))
+    assert maintenance["scheduled_change"] and maintenance["availability"] == "degraded"
+    assert {f["label"] for f in maintenance["findings"]} == {"http_load"}
+    with pytest.raises(ValueError, match="change"):
+        combine([dict(unavailable, expected_change=True)], "service", 60)
+
+    assert (
+        "http_rate_ratio"
+        not in http_summary(
+            http_window(60, 20, 200), [http_window(0, 0, 200)], *args, 120
+        )["metrics"]
+    )
+    partial = http_summary(
+        dict(http_window(60, 20, 200), complete=False), ordinary, *args, 120
+    )
+    assert not partial["metrics"] and partial["coverage"] == "partial"
+    duplicate = http_window(60, 1, 200)
+    duplicate["events"] *= 2
+    with pytest.raises(ValueError, match="duplicate"):
+        http_summary(duplicate, ordinary, *args, 120)
+    with pytest.raises(ValueError, match="distinct"):
+        http_summary(http_window(60, 20, 200), ordinary * 2, *args, 120)

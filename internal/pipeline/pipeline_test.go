@@ -515,6 +515,20 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	down4, err := migrations.Files.ReadFile("000004_assessment_jobs.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	down5, err := migrations.Files.ReadFile("000005_incident_interruption.down.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, string(down5)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, string(down4)); err != nil {
+		t.Fatal(err)
+	}
 	down3, err := migrations.Files.ReadFile("000003_security.down.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -532,7 +546,7 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	if _, err = tx.Exec(ctx, string(down)); err != nil {
 		t.Fatal(err)
 	}
-	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2,3)`)
+	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2,3,4,5)`)
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -671,12 +685,17 @@ func TestIncidentProjectionInEventOrder(t *testing.T) {
 		t.Fatalf("list=%s err=%v", list, err)
 	}
 	var header struct {
-		ID     string
-		Closed *string `json:"closed_ns"`
+		ID           string
+		Closed       *string    `json:"closed_ns"`
+		EstimatedEnd *string    `json:"estimated_end_ns"`
+		ClosedAt     *time.Time `json:"closed_at"`
 	}
 	json.Unmarshal(list[0], &header)
-	if header.Closed == nil {
+	if header.Closed == nil || header.ClosedAt == nil {
 		t.Fatal("incident still open")
+	}
+	if expectedEnd := fmt.Sprint(base.Add(15 * time.Second).UnixNano()); header.EstimatedEnd == nil || *header.EstimatedEnd != expectedEnd || *header.Closed == expectedEnd {
+		t.Fatalf("incident boundary mismatch: %s", list[0])
 	}
 	var id int64
 	fmt.Sscan(header.ID, &id)
@@ -731,5 +750,122 @@ func TestPermanentErrorAllowsFollowingPredictions(t *testing.T) {
 	var reason string
 	if err := db.Pool.QueryRow(ctx, "SELECT payload->>'reason' FROM predictions WHERE event_id='incompatible'").Scan(&reason); err != nil || reason != "incompatible_model_or_policy" {
 		t.Fatal(reason, err)
+	}
+}
+
+func TestForecastPredictionsStayObservableWithoutOpeningIncidents(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	end := time.Now()
+	for i := range 3 {
+		event := window(t, fmt.Sprintf("forecast-%d", i), end.Add(time.Duration(i)*5*time.Second))
+		if err := db.Ingest(ctx, batch(t, event), sensor, "gru-shadow", "v1"); err != nil {
+			t.Fatal(err)
+		}
+		job, err := db.Claim(ctx, time.Minute, false)
+		if err != nil || job == nil {
+			t.Fatal(job, err)
+		}
+		result := prediction(*job)
+		score := 0.9
+		result.Score = &score
+		result.Status = "anomalous"
+		if err = db.Finish(ctx, *job, result); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.Project(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count(t, db, "predictions") != 3 || count(t, db, "incidents") != 0 || count(t, db, "incident_queue") != 0 {
+		t.Fatal("forecast was not stored in observation mode")
+	}
+}
+
+func TestProjectionCanAdvancePastAnExpiredWindow(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	base := time.Unix(1700000000, 0)
+	ingest(t, db, window(t, "expired", base), window(t, "latest", base.Add(5*time.Second)))
+	latest, err := db.Claim(ctx, time.Minute, false)
+	if err != nil || latest == nil || latest.EventID != "latest" {
+		t.Fatal(latest, err)
+	}
+	if err := db.Finish(ctx, *latest, prediction(*latest)); err != nil {
+		t.Fatal(err)
+	}
+	if advanced, err := db.ProjectWithGap(ctx, time.Hour); err != nil || advanced {
+		t.Fatal(advanced, err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE feature_windows SET received_at=clock_timestamp()-interval '2 hours' WHERE event_id='expired'`); err != nil {
+		t.Fatal(err)
+	}
+	if advanced, err := db.ProjectWithGap(ctx, time.Hour); err != nil || !advanced {
+		t.Fatal(advanced, err)
+	}
+	var missing int64
+	if err := db.Pool.QueryRow(ctx, `SELECT (state->>'Missing')::bigint FROM incident_streams`).Scan(&missing); err != nil || missing != 1 {
+		t.Fatal(missing, err)
+	}
+}
+
+func TestPersistencePolicyStoresAnInterruptionEvenIfInferenceFinishesLater(t *testing.T) {
+	db, _ := database(t)
+	ctx := context.Background()
+	base := time.Unix(1700000000, 0)
+	var input []json.RawMessage
+	for i := range 4 {
+		input = append(input, window(t, fmt.Sprint(i), base.Add(time.Duration(i+1)*5*time.Second)))
+	}
+	if err := db.Ingest(ctx, batch(t, input...), sensor, "test-model", "v2"); err != nil {
+		t.Fatal(err)
+	}
+	var delayed *store.Job
+	for range input {
+		j, err := db.Claim(ctx, time.Minute, false)
+		if err != nil || j == nil {
+			t.Fatal(j, err)
+		}
+		if j.EventID == "3" {
+			delayed = j
+			continue
+		}
+		p := prediction(*j)
+		score := .9
+		p.Status, p.Score = "anomalous", &score
+		if err = db.Finish(ctx, *j, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if delayed == nil {
+		t.Fatal("missing delayed job")
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE feature_windows SET received_at=clock_timestamp()-interval '2 hours' WHERE event_id='3'`); err != nil {
+		t.Fatal(err)
+	}
+	if advanced, err := db.ProjectWithGap(ctx, time.Hour); !advanced || err != nil {
+		t.Fatal(advanced, err)
+	}
+	if err := db.Finish(ctx, *delayed, prediction(*delayed)); err != nil {
+		t.Fatal(err)
+	}
+	var id, interrupted int64
+	var closed *int64
+	if err := db.Pool.QueryRow(ctx, `SELECT id,interrupted_ns,closed_ns FROM incidents`).Scan(&id, &interrupted, &closed); err != nil ||
+		interrupted != base.Add(15*time.Second).UnixNano() || closed != nil {
+		t.Fatal(id, interrupted, closed, err)
+	}
+	detail, err := db.Incident(ctx, id, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry struct {
+		Kind       string
+		Prediction contract.Prediction
+	}
+	events := detail["events"].([]json.RawMessage)
+	if len(events) != 4 || json.Unmarshal(events[3], &entry) != nil || entry.Kind != "gap" ||
+		entry.Prediction.Status != "degraded" || entry.Prediction.UnavailableReason != "prediction_timeout" {
+		t.Fatal(events)
 	}
 }

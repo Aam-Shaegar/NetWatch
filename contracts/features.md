@@ -28,3 +28,28 @@ remain null. Live capture advances the watermark on read timeouts. Capture
 loss is attributed to windows intersecting the interval between stats polls.
 Late packets increment the epoch total and flag their still-open window, or
 the first open window if their original window has already been published.
+
+## traffic-v2 TCP connection ages
+
+`traffic-v2` keeps the original columns and adds five required, nullable
+measurements. Live capture and offline replay both use the Go window engine.
+
+- `tcp_age_mean_seconds` and `tcp_age_max_seconds` are computed from one
+  sample per TCP connection incarnation with packets in the window. Each
+  sample spans the first observed opening SYN to its last observed packet
+  in the window, up to and including an observed close.
+- `tcp_closed_duration_mean_seconds` and `tcp_closed_duration_max_seconds`
+  use only connections with a known opening and a first observed RST or
+  FIN from both directions in this window.
+- `tcp_age_known_start_fraction` gives the fraction of sampled TCP
+  incarnations with a trusted opening SYN. It is null without samples.
+  The age and closure statistics are null when their respective samples
+  are unavailable.
+
+Same-sequence SYN retransmissions keep the original opening time. Quiet
+connections contribute when another packet is observed before the tracker
+expires their idle state (60 seconds between TCP packets). Expiration is
+censoring. A capture started mid-connection, a bounded state eviction, a
+capture gap, or a new epoch can make an opening time unavailable. The window
+still carries its quality flags, and incomplete observations cannot yield a
+scored prediction. Durations measure the transport connection.

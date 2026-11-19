@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,7 +26,7 @@ func TestReplayEnqueueRestartSend(t *testing.T) {
 	if err := replay(context.Background(), []string{"--input", "../../tests/fixtures/pcap/syn-retry.pcap", "--output", output, "--host", "192.0.2.10", "--epoch", "delivery-test"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := queueCommand(context.Background(), "enqueue", []string{"--input", output, "--spool", queueDir}); err != nil {
+	if err := queueCommand(context.Background(), "enqueue", []string{"--input", output, "--spool", queueDir}, newTestLog()); err != nil {
 		t.Fatal(err)
 	}
 	q, err := spool.Open(queueDir, spool.DefaultConfig())
@@ -56,7 +58,7 @@ func TestReplayEnqueueRestartSend(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err = queueCommand(ctx, "send", []string{"--spool", queueDir, "--endpoint", server.URL, "--once"}); err != nil {
+	if err = queueCommand(ctx, "send", []string{"--spool", queueDir, "--endpoint", server.URL, "--once"}, newTestLog()); err != nil {
 		t.Fatal(err)
 	}
 	got := <-received
@@ -84,7 +86,7 @@ func TestEnqueueKeepsCommittedPrefixOnInvalidLine(t *testing.T) {
 	input := filepath.Join(dir, "input.jsonl")
 	os.WriteFile(input, append(append(data, '\n'), []byte("invalid\n")...), 0600)
 	queueDir := filepath.Join(dir, "queue")
-	if err = queueCommand(context.Background(), "enqueue", []string{"--spool", queueDir, "--input", input}); err == nil {
+	if err = queueCommand(context.Background(), "enqueue", []string{"--spool", queueDir, "--input", input}, newTestLog()); err == nil {
 		t.Fatal("invalid input accepted")
 	}
 	q, err := spool.Open(queueDir, spool.DefaultConfig())
@@ -102,7 +104,7 @@ func TestBackgroundDeliveryFailureStopsCaptureContext(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	options := deliveryFlags(fs)
 	fs.Parse([]string{"--spool", t.TempDir(), "--endpoint", server.URL})
-	ctx, d, err := startDelivery(context.Background(), options, newEventLog())
+	ctx, d, err := startDelivery(context.Background(), options, newTestLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +130,7 @@ func TestLiveOverflowIsVisibleAndNonBlocking(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	options := deliveryFlags(fs)
 	fs.Parse([]string{"--spool", t.TempDir(), "--spool-bytes", "2048", "--segment-bytes", "2048"})
-	_, d, err := startDelivery(context.Background(), options, newEventLog())
+	_, d, err := startDelivery(context.Background(), options, newTestLog())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,13 +148,13 @@ func TestLiveOverflowIsVisibleAndNonBlocking(t *testing.T) {
 	}
 }
 func TestDeliveryRejectsInvalidModes(t *testing.T) {
-	if err := live(context.Background(), []string{"--interface", "eth0", "--filter", "tcp", "--output", "unused", "--spool", t.TempDir()}); err == nil {
+	if err := live(context.Background(), []string{"--interface", "eth0", "--filter", "tcp", "--output", "unused", "--spool", t.TempDir()}, newTestLog()); err == nil {
 		t.Fatal("packet metadata was allowed into window spool")
 	}
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	options := deliveryFlags(fs)
 	fs.Parse([]string{"--endpoint", "http://127.0.0.1/v1/windows"})
-	if _, _, err := startDelivery(context.Background(), options, newEventLog()); err == nil {
+	if _, _, err := startDelivery(context.Background(), options, newTestLog()); err == nil {
 		t.Fatal("endpoint without queue accepted")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -171,4 +173,8 @@ func TestDeliveryRejectsInvalidModes(t *testing.T) {
 	if err = sender.Run(ctx, true); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
+}
+
+func newTestLog() *eventLog {
+	return &eventLog{logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}
 }

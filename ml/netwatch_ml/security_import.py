@@ -1,16 +1,16 @@
 """Reduce a verified minute of Go packet metadata or a ModSecurity audit record."""
 
 import argparse
-from collections import defaultdict
 import ipaddress
 import json
-from collections import Counter
-from statistics import fmean, pstdev
+from collections import Counter, defaultdict
 from pathlib import Path
+from statistics import fmean, pstdev
 
 from netwatch_ml.bursts import BurstRates
 from netwatch_ml.handshakes import Handshakes
 from netwatch_ml.security import assess, with_reference
+from netwatch_ml.telemetry import combine, http_summary, observer, probe_summary
 
 
 def _packet_minutes(lines, entity, start, minutes):
@@ -95,8 +95,12 @@ def _packet_minutes(lines, entity, start, minutes):
                 udp_fraction=counts["UDP"] / total, icmp_fraction=counts["ICMP"] / total
             )
         metrics.update(tcp.metrics())
-        if pending - tcp.completed:
-            metrics.pop("handshake_fraction", None)
+        censored = pending - tcp.completed
+        if censored and "handshake_fraction" in metrics:
+            metrics["handshake_fraction_upper"] = (
+                len(tcp.completed) + len(censored)
+            ) / len(tcp.attempts)
+            metrics.pop("handshake_fraction")
         metrics.update(burst.metrics())
         samples.append(metrics)
     return samples
@@ -111,6 +115,8 @@ def from_packets(
 ):
     if not 1 <= reference_minutes <= 60:
         raise ValueError("expected 1 to 60 verified reference minutes")
+    if reference_start + reference_minutes * 60 > start:
+        raise ValueError("the reference must precede the observed interval")
     current_metrics = packet_metrics(current, entity, start)
     samples = _packet_minutes(reference, entity, reference_start, reference_minutes)
     recent = with_reference(current_metrics, samples)
@@ -141,15 +147,31 @@ def from_waf(record, entity, start):
     )
 
 
-def from_events(lines, entity, start, kind, auth_history=False):
+def from_events(lines, entity, start, kind, auth_history=False, history_minutes=1):
     """Aggregate a complete minute from one authenticator, DNS resolver or egress log."""
+    if (
+        history_minutes not in (1, 5, 15)
+        or history_minutes != 1
+        and kind not in ("dns", "egress")
+    ):
+        raise ValueError("DNS and egress history must be 1, 5 or 15 complete minutes")
     principals = defaultdict(Counter)
     history = defaultdict(Counter)
-    labels, times, policy = [], [], set()
+    horizons = (
+        (1, 5, 15)
+        if history_minutes == 15
+        else (1, 5)
+        if history_minutes == 5
+        else (1,)
+    )
+    histories = {horizon: [] for horizon in horizons}
+    policy = set()
     for line in lines:
         event = json.loads(line)
         ts = event["time_s"]
-        lower = start - 240 if auth_history and kind == "auth" else start
+        lower = start - (
+            240 if auth_history and kind == "auth" else (history_minutes - 1) * 60
+        )
         if event["entity"] != entity or not lower <= ts < start + 60:
             continue
         if kind == "auth":
@@ -167,9 +189,12 @@ def from_events(lines, entity, start, kind, auth_history=False):
                 label = event["qname"].rstrip(".").split(".")[0].lower()
                 if not label or len(label) > 63:
                     raise ValueError("invalid DNS label")
-                labels.append(label)
+                value = label
             else:
-                times.append(ts)
+                value = ts
+            for minutes in horizons:
+                if ts >= start - (minutes - 1) * 60:
+                    histories[minutes].append(value)
     metrics = {}
     if kind == "auth" and principals:
 
@@ -199,18 +224,27 @@ def from_events(lines, entity, start, kind, auth_history=False):
             )
     if len(policy) == 1:
         metrics["unapproved_destination"] = int(policy.pop())
-    if labels:
-        metrics.update(
-            dns_queries=len(labels),
-            dns_unique_label_fraction=len(set(labels)) / len(labels),
-            dns_mean_label_length=fmean(map(len, labels)),
-        )
-    if len(times) >= 2:
-        ordered = sorted(times)
-        intervals = [b - a for a, b in zip(ordered, ordered[1:])]
-        metrics["outbound_intervals"] = len(intervals)
-        if fmean(intervals) > 0:
-            metrics["interval_cv"] = pstdev(intervals) / fmean(intervals)
+    # Require activity in the current minute before reusing history.
+    if histories[1]:
+        for minutes, values in histories.items():
+            suffix = "" if minutes == 1 else f"_{minutes}m"
+            if kind == "dns":
+                metrics.update(
+                    {
+                        "dns_queries" + suffix: len(values),
+                        "dns_unique_label_fraction" + suffix: len(set(values))
+                        / len(values),
+                        "dns_mean_label_length" + suffix: fmean(map(len, values)),
+                    }
+                )
+            elif len(values) >= 2:
+                ordered = sorted(values)
+                intervals = [b - a for a, b in zip(ordered, ordered[1:])]
+                metrics["outbound_intervals" + suffix] = len(intervals)
+                if fmean(intervals) > 0:
+                    metrics["interval_cv" + suffix] = pstdev(intervals) / fmean(
+                        intervals
+                    )
     return dict(
         schema_version=1, entity=entity, start_s=start, interval_s=60, metrics=metrics
     )
@@ -221,15 +255,27 @@ def main():
     parser.add_argument(
         "--journal", help="Authenticated NetWatch API URL, e.g. http://127.0.0.1:8080"
     )
+    parser.add_argument("--queue", action="store_true", help="submit a durable assessment job to the journal")
     sub = parser.add_subparsers(dest="kind", required=True)
-    for kind in ("packets", "waf", "observation", "auth", "dns", "egress"):
+    for kind in ("packets", "waf", "observation", "auth", "dns", "egress", "telemetry"):
         cmd = sub.add_parser(kind)
         cmd.add_argument("input", type=Path)
         if kind != "observation":
             cmd.add_argument("--entity", required=True)
             cmd.add_argument("--start", type=int, required=True)
+        if kind in ("packets", "auth"):
+            cmd.add_argument("--cohort", help="export a scoped observer record")
+            cmd.add_argument("--policy-valid-until", type=int)
         if kind in ("auth", "dns", "egress"):
             cmd.add_argument("--complete-minute", action="store_true", required=True)
+        if kind in ("dns", "egress"):
+            cmd.add_argument(
+                "--history-minutes",
+                choices=(1, 5, 15),
+                type=int,
+                default=1,
+                help="include verified continuous prior minutes in this observer log",
+            )
         if kind == "auth":
             cmd.add_argument(
                 "--auth-history",
@@ -237,6 +283,9 @@ def main():
                 help="include the four preceding recorded minutes",
             )
         if kind == "packets":
+            cmd.add_argument(
+                "--destination", help="monitored IP when --entity names the service"
+            )
             cmd.add_argument("--reference-minutes", type=int, default=1)
             cmd.add_argument("--reference", type=Path, required=True)
             cmd.add_argument("--reference-start", type=int, required=True)
@@ -246,14 +295,59 @@ def main():
                 action="store_true",
                 help="the operator verified full coverage of both 60-second intervals",
             )
+    probe = sub.add_parser(
+        "probe-log", help="produce a health observer record from a scheduled probe log"
+    )
+    probe.add_argument("input", type=Path)
+    http = sub.add_parser(
+        "http-log", help="produce an HTTP observer from normalized access logs"
+    )
+    http.add_argument("input", type=Path)
     args = parser.parse_args()
+    if args.queue and not args.journal:
+        parser.error("--queue requires --journal")
+    cohort = getattr(args, "cohort", None)
+    policy = getattr(args, "policy_valid_until", None)
+    if (cohort is None) != (policy is None):
+        parser.error("--cohort and --policy-valid-until are required together")
+    if args.journal and (cohort is not None or args.kind in ("probe-log", "http-log")):
+        parser.error("combine observer records with telemetry before journal delivery")
     with args.input.open() as stream:
+        if args.kind == "probe-log":
+            payload = json.load(stream)
+            summary = probe_summary(
+                payload["schedule"],
+                payload["results"],
+                payload["entity"],
+                payload["start_s"],
+                payload["cohort"],
+                payload["policy_valid_until_s"],
+            )
+            print(json.dumps(summary, ensure_ascii=False))
+            return
+        if args.kind == "http-log":
+            payload = json.load(stream)
+            current = payload["current"]
+            print(
+                json.dumps(
+                    http_summary(
+                        current,
+                        payload["references"],
+                        current["entity"],
+                        current["start_s"],
+                        current["cohort"],
+                        payload["policy_valid_until_s"],
+                    ),
+                    ensure_ascii=False,
+                )
+            )
+            return
         if args.kind == "packets":
             with args.reference.open() as reference:
                 observation = from_packets(
                     stream,
                     reference,
-                    args.entity,
+                    args.destination or args.entity,
                     args.start,
                     args.reference_start,
                     args.reference_minutes,
@@ -265,15 +359,30 @@ def main():
                 args.start,
                 args.kind,
                 getattr(args, "auth_history", False),
+                getattr(args, "history_minutes", 1),
+            )
+        elif args.kind == "telemetry":
+            observation = combine(
+                (json.loads(line) for line in stream), args.entity, args.start
             )
         elif args.kind == "waf":
             observation = from_waf(json.load(stream), args.entity, args.start)
         else:
             observation = json.load(stream)
+    if args.kind == "packets" and args.destination:
+        observation["entity"] = args.entity
+    if cohort is not None:
+        source = "network" if args.kind == "packets" else "auth"
+        record = observer(
+            args.entity, args.start, cohort, source, observation["metrics"], policy
+        )
+        combine([record], args.entity, args.start)
+        print(json.dumps(record, ensure_ascii=False))
+        return
     if args.journal:
         import os
         from urllib.parse import urlsplit
-        from urllib.request import Request, build_opener, HTTPRedirectHandler
+        from urllib.request import HTTPRedirectHandler, Request, build_opener
 
         endpoint = urlsplit(args.journal)
         if (
@@ -297,8 +406,9 @@ def main():
             def redirect_request(self, *args):
                 return None
 
+        route = "/v1/security/observations" if args.queue else "/v1/security/assess"
         req = Request(
-            args.journal.rstrip("/") + "/v1/security/assess",
+            args.journal.rstrip("/") + route,
             data=json.dumps(observation).encode(),
             headers={
                 "Authorization": "Bearer " + token,

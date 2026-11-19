@@ -21,7 +21,10 @@
       "const": 1
     },
     "feature_set_version": {
-      "const": "traffic-v1"
+      "enum": [
+        "traffic-v1",
+        "traffic-v2"
+      ]
     },
     "event_id": {
       "type": "string",
@@ -192,6 +195,42 @@
             "null"
           ],
           "minimum": 0
+        },
+        "tcp_age_mean_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tcp_age_max_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tcp_closed_duration_mean_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tcp_closed_duration_max_seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tcp_age_known_start_fraction": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
         }
       }
     },
@@ -229,5 +268,41 @@
         }
       }
     }
-  }
+  },
+  "$defs": {
+    "tcpConnectionAges": {
+      "required": [
+        "tcp_age_mean_seconds",
+        "tcp_age_max_seconds",
+        "tcp_closed_duration_mean_seconds",
+        "tcp_closed_duration_max_seconds",
+        "tcp_age_known_start_fraction"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "feature_set_version": {
+            "const": "traffic-v2"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "features": {
+            "$ref": "#/$defs/tcpConnectionAges"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "features": {
+            "maxProperties": 16
+          }
+        }
+      }
+    }
+  ]
 }

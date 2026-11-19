@@ -1,5 +1,33 @@
 import { useEffect, useState } from "react";
 
+type Finding = {
+  label: string;
+  basis: string;
+  kind?:
+    | "traffic_pattern"
+    | "degradation_pattern"
+    | "security_indicator"
+    | "waf_signal";
+};
+
+const availabilityLabels = {
+  reachable: "Пробы прошли",
+  degraded: "Есть отказы проб",
+  unmeasured: "Доступность не измерена",
+};
+
+function findingText(finding: Finding) {
+  const { kind, basis, label } = finding;
+  if (kind === "waf_signal" || basis === "upstream_waf")
+    return "Сигнал WAF · " + label;
+  if (basis === "burst_with_silent_reference")
+    return "Всплеск после тишины · " + label;
+  if (kind === "traffic_pattern") return "Отклонение нагрузки · " + label;
+  if (kind === "degradation_pattern") return "Перегрузка с отказами · " + label;
+  if (kind === "security_indicator") return "Признаки атаки · " + label;
+  return label;
+}
+
 type Observation = {
   id: string;
   sensor: string;
@@ -7,7 +35,9 @@ type Observation = {
   assessment: {
     ruleset: string;
     evaluated: number;
-    findings: { label: string }[];
+    availability?: keyof typeof availabilityLabels;
+    scheduled_change?: boolean;
+    findings: Finding[];
     unassessed: Record<string, string[]>;
   };
 };
@@ -61,14 +91,24 @@ export function Observations({
               timeZone: "UTC",
             }) + " UTC"}{" "}
             · {row.observation.entity} ·{" "}
-            {row.assessment.findings.map((f) => f.label).join(", ") ||
+            {row.assessment.findings.map(findingText).join(", ") ||
               (row.assessment.evaluated
-                ? "Нет совпадений"
+                ? "В проверенных правилах нет совпадений"
                 : "Недостаточно данных")}
           </summary>
           <p>
             Сенсор {row.sensor} · Правила {row.assessment.ruleset}
           </p>
+          {row.assessment.availability && (
+            <p>{availabilityLabels[row.assessment.availability]}</p>
+          )}
+          {row.assessment.scheduled_change && <p>Запланированное изменение</p>}
+          {Object.keys(row.assessment.unassessed).length > 0 && (
+            <p>
+              Правил без достаточных данных{" "}
+              {Object.keys(row.assessment.unassessed).length}
+            </p>
+          )}
           <pre>
             {JSON.stringify(
               { observation: row.observation, assessment: row.assessment },

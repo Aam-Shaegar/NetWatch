@@ -1,68 +1,91 @@
 package api
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
-	"net/url"
+	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"netwatch.local/netwatch/internal/assessment"
 	"netwatch.local/netwatch/internal/contract"
 )
 
+func readObservation(w http.ResponseWriter, r *http.Request) []byte {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 65536))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			sendJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "observation_too_large"})
+		} else {
+			sendJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_body"})
+		}
+		return nil
+	}
+	if contract.Validate("security-observation", raw) != nil {
+		sendJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "invalid_security_observation"})
+		return nil
+	}
+	return raw
+}
+
 func securityIngest(c Config) func(http.ResponseWriter, *http.Request, string) {
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := assessment.New(c.SecurityEndpoint, 10*time.Second)
 	return func(w http.ResponseWriter, r *http.Request, sensor string) {
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 65536))
+		raw := readObservation(w, r)
+		if raw == nil {
+			return
+		}
+		result, err := client.Assess(r.Context(), raw)
 		if err != nil {
-			sendJSON(w, 413, map[string]string{"error": "observation_too_large"})
-			return
-		}
-		if contract.Validate("security-observation", raw) != nil {
-			sendJSON(w, 422, map[string]string{"error": "invalid_security_observation"})
-			return
-		}
-		endpoint := c.SecurityEndpoint
-		if endpoint == "" {
-			endpoint = "http://127.0.0.1:8000/v1/security/assess"
-		}
-		req, err := http.NewRequestWithContext(r.Context(), "POST", endpoint, bytes.NewReader(raw))
-		if err != nil {
-			sendJSON(w, 503, map[string]string{"error": "assessment_unavailable"})
-			return
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			sendJSON(w, 503, map[string]string{"error": "assessment_unavailable"})
-			return
-		}
-		defer resp.Body.Close()
-		result, err := io.ReadAll(io.LimitReader(resp.Body, 131073))
-		if err != nil || resp.StatusCode != 200 || len(result) > 131072 || contract.Validate("security-assessment", result) != nil {
-			sendJSON(w, 502, map[string]string{"error": "invalid_assessment_response"})
-			return
-		}
-		var input, output struct {
-			Entity   string
-			Start    int64 `json:"start_s"`
-			Interval int   `json:"interval_s"`
-		}
-		if json.Unmarshal(raw, &input) != nil || json.Unmarshal(result, &output) != nil || input != output {
-			sendJSON(w, 502, map[string]string{"error": "assessment_identity_mismatch"})
+			status := http.StatusBadGateway
+			if errors.Is(err, assessment.ErrUnavailable) {
+				status = http.StatusServiceUnavailable
+			}
+			sendJSON(w, status, map[string]string{"error": err.Error()})
 			return
 		}
 		id, err := c.Store.SaveAssessment(r.Context(), sensor, raw, result)
 		if err != nil {
-			sendJSON(w, 503, map[string]string{"error": "storage_unavailable"})
+			sendJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_unavailable"})
 			return
 		}
-		sendJSON(w, 200, map[string]any{"id": id, "assessment": json.RawMessage(result)})
+		sendJSON(w, http.StatusOK, map[string]any{"id": id, "assessment": json.RawMessage(result)})
 	}
 }
 
-func validSecurityEndpoint(raw string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && u.Hostname() != "" && u.User == nil && u.Fragment == "" && (u.Scheme == "https" || u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1"))
+func securityEnqueue(c Config) func(http.ResponseWriter, *http.Request, string) {
+	return func(w http.ResponseWriter, r *http.Request, sensor string) {
+		raw := readObservation(w, r)
+		if raw == nil {
+			return
+		}
+		id, err := c.Store.EnqueueAssessment(r.Context(), sensor, raw)
+		if err != nil {
+			sendJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_unavailable"})
+			return
+		}
+		w.Header().Set("Location", "/v1/security/observations/"+id)
+		sendJSON(w, http.StatusAccepted, map[string]string{"job_id": id})
+	}
+}
+
+func securityStatus(c Config) func(http.ResponseWriter, *http.Request, string) {
+	return func(w http.ResponseWriter, r *http.Request, sensor string) {
+		id, err := strconv.ParseInt(r.PathValue("job_id"), 10, 64)
+		if err != nil || id <= 0 {
+			sendJSON(w, http.StatusNotFound, map[string]string{"error": "observation_not_found"})
+			return
+		}
+		receipt, err := c.Store.AssessmentStatus(r.Context(), sensor, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			sendJSON(w, http.StatusNotFound, map[string]string{"error": "observation_not_found"})
+		} else if err != nil {
+			sendJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_unavailable"})
+		} else {
+			sendJSON(w, http.StatusOK, json.RawMessage(receipt))
+		}
+	}
 }

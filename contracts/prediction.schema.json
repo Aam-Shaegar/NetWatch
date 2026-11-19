@@ -26,7 +26,7 @@
       "maxLength": 200
     },
     "feature_set_version": {
-      "const": "traffic-v1"
+      "enum": ["traffic-v1", "traffic-v2"]
     },
     "status": {
       "enum": [
@@ -53,6 +53,23 @@
       "minimum": 0
     },
     "reason": {"enum":["incompatible_model_or_policy","invalid_inference_request"]},
+    "unavailable_reason": {
+      "enum": ["feature_set_mismatch", "outside_model_scope", "capture_loss",
+               "incomplete_coverage", "unverified_capture_quality", "prediction_timeout"]
+    },
+    "observational": {"type": "boolean"},
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forest_score", "forest_threshold"],
+      "dependentRequired": {"pattern_label": ["pattern_ratio"], "pattern_ratio": ["pattern_label"]},
+      "properties": {
+        "forest_score": {"type": "number", "minimum": 0},
+        "forest_threshold": {"type": "number", "minimum": 0},
+        "pattern_label": {"enum": ["persistent_exchange", "large_upload", "large_response", "connection_surge"]},
+        "pattern_ratio": {"type": "number", "minimum": 0}
+      }
+    },
     "classification": {
       "type": "object",
       "additionalProperties": false,
@@ -111,5 +128,7 @@
         }
       }
     }
-  }
+  },
+  "if": {"required": ["unavailable_reason"]},
+  "then": {"properties": {"status": {"enum": ["insufficient_data", "degraded"]}}}
 }

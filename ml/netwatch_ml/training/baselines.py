@@ -12,8 +12,9 @@ import pyarrow.parquet as pq
 import sklearn
 from sklearn.ensemble import IsolationForest
 
-from netwatch_ml.models.detector import (FEATURES, POLICY, VERSION, export_forest, fit_transform_parameters,
-                                        forest_score, load_bundle, matrix, model_id, transform)
+from netwatch_ml.models.detector import (FEATURES, LAB_PROFILE, POLICY, VERSION, export_forest,
+                                        fit_transform_parameters, forest_score, load_bundle, matrix, model_id,
+                                        transform)
 
 PARTS = ('train', 'validation', 'calibration', 'test')
 BUDGET = 1.0
@@ -83,18 +84,28 @@ def metrics(rows, scores, threshold):
                 abnormal_windows=int(actual.sum()), detected_windows=int((alerts & actual).sum()))
 
 
+def fit_forest(values, seed):
+    model = IsolationForest(n_estimators=100, max_samples=min(256, len(values)),
+                            random_state=seed, n_jobs=1)
+    if model.max_samples < 2:
+        raise ValueError('insufficient training windows')
+    model.fit(values)
+    return model, export_forest(model)
+
+
+def export_scores(values, model, forest):
+    scores = np.array([forest_score(row, forest) for row in values])
+    np.testing.assert_allclose(scores, -model.score_samples(values), rtol=0, atol=1e-12)
+    return scores
+
+
 def train(folder, destination, seed=42):
     if destination.exists():
         raise FileExistsError(destination)
     parts = read_partitions(folder)
     params = fit_transform_parameters(matrix(parts['train']))
     values = {part: transform(matrix(rows), params) for part, rows in parts.items()}
-    model = IsolationForest(n_estimators=100, max_samples=min(256, len(parts['train'])),
-                            random_state=seed, n_jobs=1)
-    if model.max_samples < 2:
-        raise ValueError('insufficient training windows')
-    model.fit(values['train'])
-    forest = export_forest(model)
+    model, forest = fit_forest(values['train'], seed)
     report = {'false_window_budget_per_normal_hour': BUDGET, 'models': {}}
     for method in ('fixed', 'ewma', 'isolation_forest'):
         scores = {}
@@ -105,17 +116,20 @@ def train(folder, destination, seed=42):
             elif method == 'ewma':
                 scores[part] = ewma_scores(parts[part], x)
             else:
-                scores[part] = np.array([forest_score(row, forest) for row in x])
-                np.testing.assert_allclose(scores[part], -model.score_samples(x), rtol=0, atol=1e-12)
+                scores[part] = export_scores(x, model, forest)
         threshold = calibrate(scores['calibration'])
         report['models'][method] = dict(threshold=threshold, **{
             part: metrics(parts[part], vector, threshold) for part, vector in scores.items()})
     manifest = json.loads((folder / 'manifest.json').read_text())
     payload = dict(format=1, feature_set_version=VERSION, features=FEATURES, policy_version=POLICY,
-                   profile='tcp-service-8080-5s', preprocessing=params, forest=forest,
+                   profile=LAB_PROFILE, preprocessing=params, forest=forest,
                    threshold=report['models']['isolation_forest']['threshold'], seed=seed,
                    dataset_manifest_sha256=sha(folder / 'manifest.json'), sklearn_version=sklearn.__version__,
                    splits={p: manifest['splits'][p]['groups'] for p in PARTS})
+    return publish_bundle(destination, payload, report)
+
+
+def publish_bundle(destination, payload, report):
     bundle = dict(model_id=model_id(payload), detector=payload)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=destination.parent) as tmp:

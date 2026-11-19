@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -38,6 +40,7 @@ type Rejection struct {
 }
 type Config struct {
 	Endpoint, Token                        string
+	TrustedCAPEM                           string
 	AllowInsecureHTTP                      bool
 	Timeout, Interval, Backoff, MaxBackoff time.Duration
 	BatchSize                              int
@@ -77,6 +80,19 @@ func New(q *spool.Queue, c Config) (*Sender, error) {
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxResponseHeaderBytes = 64 << 10
+	if c.TrustedCAPEM != "" {
+		if u.Scheme != "https" {
+			return nil, fmt.Errorf("a trusted CA requires an HTTPS endpoint")
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, fmt.Errorf("load system trust store: %w", err)
+		}
+		if !roots.AppendCertsFromPEM([]byte(c.TrustedCAPEM)) {
+			return nil, fmt.Errorf("NETWATCH_SENSOR_CA_PEM must contain a PEM certificate")
+		}
+		tr.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	}
 	return &Sender{queue: q, config: c, client: &http.Client{Timeout: c.Timeout, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func NewBatch(items []spool.Item, loss spool.Loss) (Batch, error) {

@@ -7,6 +7,6 @@ import (
 	"io"
 )
 
-func OpenLive(iface, filter, sensor string, record io.Writer) (*LiveSource, error) {
+func OpenLive(iface, filter, sensor string, bufferBytes int, record io.Writer) (*LiveSource, error) {
 	return nil, fmt.Errorf("live capture requires Linux with CGO and libpcap; use the sensor Docker image")
 }

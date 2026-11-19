@@ -80,7 +80,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql", "000003_security.up.sql"}
+var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql", "000003_security.up.sql", "000004_assessment_jobs.up.sql", "000005_incident_interruption.up.sql", "000006_pipeline_status.up.sql"}
 
 func (s *Store) Ready(ctx context.Context) error {
 	for i, file := range migrationFiles {
@@ -95,7 +95,7 @@ func (s *Store) Ready(ctx context.Context) error {
 		}
 	}
 	var ok bool
-	err := s.Pool.QueryRow(ctx, `SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['feature_windows','inference_jobs','ingestion_batches','predictions','incidents','incident_queue','incident_events','incident_streams','security_observations']) name`).Scan(&ok)
+	err := s.Pool.QueryRow(ctx, `SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['feature_windows','inference_jobs','ingestion_batches','predictions','incidents','incident_queue','incident_events','incident_streams','security_observations','assessment_jobs']) name`).Scan(&ok)
 	if err != nil || !ok {
 		return fmt.Errorf("database schema not ready")
 	}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"netwatch.local/netwatch/internal/assessment"
 	"netwatch.local/netwatch/internal/contract"
 	"netwatch.local/netwatch/internal/store"
 	"netwatch.local/netwatch/internal/transport"
@@ -26,12 +27,13 @@ type Config struct {
 	Operators                map[string]string
 	WebDir, SecurityEndpoint string
 	ModelID, PolicyVersion   string
+	PrivateCompose           bool
 }
 
 // Handler retains a liveness-only startup profile when no database is configured.
 func Handler() http.Handler { return routes(Config{}, nil) }
 func New(c Config) (http.Handler, error) {
-	if c.SecurityEndpoint != "" && !validSecurityEndpoint(c.SecurityEndpoint) {
+	if c.SecurityEndpoint != "" && !assessment.ValidEndpoint(c.SecurityEndpoint, "/v1/security/assess", c.PrivateCompose) {
 		return nil, fmt.Errorf("invalid assessment endpoint")
 	}
 	if strings.ContainsRune(c.ModelID+c.PolicyVersion, 0) {
@@ -96,6 +98,8 @@ func routes(c Config, tokens map[[32]byte]string) http.Handler {
 		}
 	}
 	mux.HandleFunc("POST /v1/security/assess", authorize(securityIngest(c)))
+	mux.HandleFunc("POST /v1/security/observations", authorize(securityEnqueue(c)))
+	mux.HandleFunc("GET /v1/security/observations/{job_id}", authorize(securityStatus(c)))
 	mux.HandleFunc("POST /v1/windows", authorize(func(w http.ResponseWriter, r *http.Request, sensor string) {
 		media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || media != "application/json" {

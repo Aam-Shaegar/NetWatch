@@ -50,6 +50,76 @@ accepts at most 100 windows and 2 MiB per request. Partial coverage, observation
 or an unsupported profile produces insufficient_data with null score and threshold.
 Use the report to assess release suitability separately from the ability to serve the file.
 
+## Server detector
+
+The work stack loads one artifact selected by `NETWATCH_MODEL_DIR`,
+`NETWATCH_MODEL_ID` and `NETWATCH_MODEL_SHA256`. The current candidate uses a
+service-bound Isolation Forest bundle, `NETWATCH_CAPTURE_FEATURE_SET=traffic-v1`
+and `NETWATCH_POLICY_VERSION=v2`. The feature version selects the window input.
+The policy version controls how window scores become incidents. The same
+settings apply across the work stack. Model bundles are kept outside Git.
+MLP was used in offline comparisons as recorded in the
+[benchmark summary](../../benchmarks/detection-results.md).
+
+## Calibrate a detector for one service
+
+Use this experimental training path for a new service or sensor. Collect representative
+normal traffic on at least two separate captures. Export the five-second
+`destination_service` windows from the Go sensor as JSONL. Keep a separate set of
+normal and anomalous intervals for acceptance.
+
+Create a version 1 JSON manifest beside the window files. Set `schema_version` to
+`1`, `feature_set_version` to the version of the recorded windows, and `binding` to an object with the
+exact `sensor_id` and TCP `entity_id` (for example `TCP/192.0.2.10:443`).
+Under `captures`, put one or more entries in each of the `train` and `calibration`
+arrays. Each entry has `label: "normal"`, `windows` (relative JSONL path),
+`windows_sha256`, and `source_sha256` (of the underlying capture). Each capture
+must have a unique epoch, source digest, event IDs and window timestamps. Supply
+only aligned, complete windows with verified zero capture drops, late packets
+and state evictions.
+
+```sh
+make train DATASET=data/processed/SERVICE OUTPUT=artifacts/SERVICE
+```
+
+Fit the feature transforms and forest on the training captures. Use the calibration
+captures to set the threshold at the one false window per normal hour budget.
+The report records the observed calibration exposure; with less than an hour,
+the calibration budget allows zero exceedances. Use longer normal controls
+covering the service's operating hours to measure a deployment false-alarm rate.
+
+The candidate uses the same serving configuration as above. The bundle binds
+predictions to that exact sensor and service. A different binding or an incomplete
+observation returns `insufficient_data`. Use the Go incident policy to compare
+false incidents, missed episodes and start/end errors with the deployed baseline
+before selecting the candidate for `make work`.
+
+For a profile with TCP connection ages, collect with
+`netwatch-sensor live --feature-set traffic-v2` alongside the regular live
+options and use `traffic-v2` in the training manifest. Offline extraction
+accepts the same feature-set flag. A replayed PCAP without measured loss
+information retains unknown capture quality.
+
+For deployment, pin the matching scoped bundle and set
+`NETWATCH_CAPTURE_FEATURE_SET=traffic-v2` in the work environment. Verify
+that the configured sensor identity and TCP service match the bundle binding.
+The work stack requires ML readiness with the configured feature set.
+On changing the feature set, start a new capture epoch and use a matching
+artifact for that version. See the [feature definitions](../../contracts/features.md).
+
+## Compare incident policies
+
+The candidate incident policy is enabled with `NETWATCH_POLICY_VERSION=v2`
+in the work environment. The API, worker and ML service use the same setting.
+The pinned scoring artifact can be reused for this comparison. Existing
+incident streams retain their policy version. Changing the configured policy
+creates new streams for new observations.
+
+`make test-acceptance` takes the policy from the verified holdout manifest.
+Check the estimated end separately from closure time. An interrupted episode
+has an interruption time and an unresolved end. The worker persists the
+reason an input was unscored. See the [policy rules](../adr/0007-incident-evidence-and-interruption.md).
+
 ## GRU forecast and incident-level comparison
 
 Use the audited capture collection corresponding to the Parquet dataset, the
@@ -100,3 +170,9 @@ supported windows of one stream.
 ```sh
 ml/.venv/bin/python scripts/detector_smoke.py artifacts/FORECAST data/runs/COLLECTION/GROUP/live.jsonl
 ```
+
+GRU predictions are retained for observation. They do not open incidents.
+The service bundle exports the Isolation Forest score, its threshold, and
+the strongest service rule separately from the final score.
+Set NETWATCH_SERVICE_MODEL_ENTITIES to a comma-separated list of exact
+service entity IDs to scope live inference to the intended service profile.

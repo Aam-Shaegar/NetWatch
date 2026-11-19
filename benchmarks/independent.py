@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 from jsonschema import ValidationError
-
 from netwatch_ml.contracts import validate
 from netwatch_ml.models.detector import load_bundle, predict_window
 from netwatch_ml.models.patterns import LABELS
@@ -18,7 +17,8 @@ PASSIVE_FILES = (
     "contracts/security-observation.schema.json",
 )
 SERVICE = ("foreground_pause", *LABELS, "persistent_exchange")
-PASSIVE = set(RULES) | set(WAF)
+# HTTP load is operational context. The anomaly inventory remains fixed.
+PASSIVE = (set(RULES) - {"http_load"}) | set(WAF)
 KINDS = {
     "passive": PASSIVE,
     "service": {"generic_anomaly", *SERVICE},
@@ -75,7 +75,7 @@ def excluded_sources(training, development):
     return ids, hashes
 
 
-def outcomes(kind, payload, bundles):
+def outcomes(kind, payload, bundles, details=None):
     if kind == "passive":
         result = assess(payload)
         found = {item["label"] for item in result["findings"]}
@@ -87,6 +87,8 @@ def outcomes(kind, payload, bundles):
     window = validate("window", payload["window"])
     history = [validate("window", previous) for previous in payload.get("history", [])]
     prediction = predict_window(window, bundles[kind], history)
+    if details is not None:
+        details.update(prediction.get("diagnostics", {}))
     status = prediction["status"]
     if kind == "forecast":
         return {
@@ -126,11 +128,17 @@ def empty_report():
     }
 
 
-def evaluate(manifest_path, artifact, forecast, training, report):
+def evaluate(manifest_path, artifact, forecast, training, report, *, regression=False):
     manifest = read(manifest_path)
     report["manifest_sha256"] = digest(manifest_path)
-    if manifest["version"] != 1 or manifest["unseen_by_developers"] is not True:
-        raise ValueError("expected a v1 holdout attested as unseen during development")
+    expected_unseen = not regression
+    if (
+        manifest["version"] != 1
+        or manifest["unseen_by_developers"] is not expected_unseen
+    ):
+        raise ValueError(
+            "expected a v1 manifest with a provenance attestation matching the evaluation mode"
+        )
     rules = {name: digest(HERE.parent / name) for name in PASSIVE_FILES}
     if manifest["passive_sha256"] != rules:
         raise ValueError(
@@ -191,6 +199,9 @@ def evaluate(manifest_path, artifact, forecast, training, report):
         for kind, bundle in bundles.items()
     }
     seen_observations = set()
+    report["forest_only"] = dict(
+        positive=0, negative=0, hits=0, false_alarms=0, unavailable=0
+    )
     for case, path in checked_cases:
         payload = read(path)
         kind = case["kind"]
@@ -203,7 +214,17 @@ def evaluate(manifest_path, artifact, forecast, training, report):
         if identity in seen_observations:
             raise ValueError(f"duplicate observation: {case['id']}")
         seen_observations.add(identity)
-        actual = outcomes(kind, payload, bundles)
+        details = {}
+        actual = outcomes(kind, payload, bundles, details)
+        if "generic_anomaly" in case["expect"]:
+            expected = case["expect"]["generic_anomaly"]
+            forest = report["forest_only"]
+            forest["positive" if expected else "negative"] += 1
+            score = details.get("forest_score")
+            if score is None:
+                forest["unavailable"] += 1
+            elif score > details["forest_threshold"]:
+                forest["hits" if expected else "false_alarms"] += 1
         results = {}
         for label, expected in case["expect"].items():
             row = report["types"][label]
@@ -226,10 +247,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("manifest", "service", "forecast", "training", "output"):
         parser.add_argument(name, type=Path)
+    parser.add_argument(
+        "--regression", action="store_true", help="use previously evaluated data"
+    )
     args = parser.parse_args()
     report = empty_report()
+    report["mode"] = "regression" if args.regression else "holdout"
     try:
-        evaluate(args.manifest, args.service, args.forecast, args.training, report)
+        evaluate(
+            args.manifest,
+            args.service,
+            args.forecast,
+            args.training,
+            report,
+            regression=args.regression,
+        )
     except (
         OSError,
         ValueError,

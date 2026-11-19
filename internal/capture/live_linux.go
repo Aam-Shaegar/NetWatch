@@ -16,7 +16,8 @@ type pcapBackend struct{ handle *pcap.Handle }
 
 func (b pcapBackend) Close() { b.handle.Close() }
 func (b pcapBackend) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
-	data, info, err := b.handle.ReadPacketData()
+	// LiveSource synchronously records and decodes this frame before its next read.
+	data, info, err := b.handle.ZeroCopyReadPacketData()
 	if err == pcap.NextErrorTimeoutExpired {
 		err = ErrTimeout
 	}
@@ -31,7 +32,7 @@ func (b pcapBackend) Stats() (Stats, error) {
 }
 
 // OpenLive opens a named interface without promiscuous mode. record is optional.
-func OpenLive(iface, filter, sensor string, record io.Writer) (*LiveSource, error) {
+func OpenLive(iface, filter, sensor string, bufferBytes int, record io.Writer) (*LiveSource, error) {
 	if iface == "" || filter == "" || sensor == "" || len(sensor) > 200 {
 		return nil, fmt.Errorf("interface, BPF filter and sensor ID are required")
 	}
@@ -43,6 +44,9 @@ func OpenLive(iface, filter, sensor string, record io.Writer) (*LiveSource, erro
 		return nil, err
 	}
 	defer inactive.CleanUp()
+	if err = inactive.SetBufferSize(bufferBytes); err != nil {
+		return nil, fmt.Errorf("configure capture buffer: %w", err)
+	}
 	if err = inactive.SetSnapLen(maxFrame); err != nil {
 		return nil, err
 	}

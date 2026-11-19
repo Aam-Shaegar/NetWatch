@@ -1,16 +1,21 @@
+from functools import cache
 import json
-import math
 import ipaddress
 from pathlib import Path
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[2]
 
-def validate(kind: str, value: dict):
+@cache
+def validator(kind: str):
     if kind not in {"window", "prediction", "packet"}:
         raise ValueError("unknown contract")
     schema = json.loads((ROOT / "contracts" / f"{kind}.schema.json").read_text())
-    Draft202012Validator(schema).validate(value)
+    return Draft202012Validator(schema)
+
+
+def validate(kind: str, value: dict):
+    validator(kind).validate(value)
     # jsonschema accepts Python NaN as number; reject it before inference.
     json.dumps(value, allow_nan=False)
     for key in ("window_start_ns", "window_end_ns", "timestamp_ns"):

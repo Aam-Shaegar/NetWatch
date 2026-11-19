@@ -1,9 +1,9 @@
 """Classify passive observations from trusted sensors and security logs."""
 
-from dataclasses import dataclass
-from statistics import median
 import json
+from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 
 from jsonschema import Draft202012Validator
 
@@ -33,9 +33,11 @@ RULES = {
         Bound("unavailable_fraction", 0.3),
         Bound("source_ips", 16),
     ),
+    "http_load": (Bound("http_rate_ratio", 5),),
     "web_ddos": (
         Bound("http_rate_ratio", 5),
         Bound("http_error_fraction", 0.3),
+        Bound("unavailable_fraction", 0.3),
         Bound("http_clients", 16),
     ),
     "syn_flood": (
@@ -90,6 +92,18 @@ RULES = {
         Bound("unapproved_destination", 1),
     ),
 }
+CORRELATION_SOURCES = {
+    "dos": {"network", "probe", "change"},
+    "ddos": {"network", "probe", "change"},
+    "web_ddos": {"http", "probe", "change"},
+    "slow_headers": {"headers"},
+    "possible_exfiltration": {"dlp"},
+    "possible_exploitation": {"process"},
+    "source_spoofing": {"ingress", "change"},
+    "possible_mitm": {"gateway", "tls", "change"},
+}
+DEGRADATION_PATTERNS = {"dos", "ddos", "web_ddos"}
+TRAFFIC_PATTERNS = {"packet_flood", "http_load", "syn_flood", "udp_flood", "icmp_flood"}
 WAF = {"xss": 941, "sqli": 942}
 VALIDATOR = Draft202012Validator(
     json.loads((ROOT / "contracts/security-observation.schema.json").read_text())
@@ -152,14 +166,62 @@ ADAPTIVE = {
 }
 
 
+def complete_observer(observation, source):
+    observers = observation.get("correlation", {}).get("observers", {})
+    metadata = observers.get(source, {})
+    return metadata.get("coverage") == "complete"
+
+
+def scheduled_change(observation):
+    if not complete_observer(observation, "change"):
+        return False
+    change = observation["correlation"]["observers"]["change"]
+    expiry = change["policy_valid_until_s"]
+    return (
+        change["expected_change"]
+        and expiry is not None
+        and expiry >= observation["start_s"] + observation["interval_s"]
+    )
+
+
+def correlation_status(observation, label):
+    observers = observation.get("correlation", {}).get("observers", {})
+    required = CORRELATION_SOURCES.get(label, set())
+    if not required or not required <= observers.keys():
+        return None
+    relevant = [observers[source] for source in sorted(required)]
+    if any(source["coverage"] != "complete" for source in relevant):
+        return None
+    end = observation["start_s"] + observation["interval_s"]
+    if any(
+        source["policy_valid_until_s"] is None or source["policy_valid_until_s"] < end
+        for source in relevant
+    ):
+        return "stale_policy"
+    if label in DEGRADATION_PATTERNS and scheduled_change(observation):
+        return "expected_change"
+    return "verified"
+
+
 def assess(observation):
     VALIDATOR.validate(observation)
     json.dumps(observation, allow_nan=False)
     metrics = observation["metrics"]
     findings, unavailable = [], {}
     for label, bounds in RULES.items():
+        context = correlation_status(observation, label)
+        if (label in BURST or label in ("dos", "ddos")) and metrics.get("in_pps") == 0:
+            # A measured zero packet count excludes even a subwindow burst.
+            continue
+        if label == "syn_flood" and metrics.get("syn_per_second") == 0:
+            continue
         checks = list(bounds)
         evidence = {}
+        basis = (
+            "correlated_observation"
+            if label in CORRELATION_SOURCES
+            else "observed_pattern"
+        )
         above_ceiling = True
         if label in ADAPTIVE:
             metric = ADAPTIVE[label]
@@ -182,19 +244,58 @@ def assess(observation):
         if peak and {peak, "normal_" + peak, "normal_peak_pps_5s"} <= metrics.keys():
             ceiling = max(metrics["normal_" + peak], metrics["normal_peak_pps_5s"])
             if metrics[peak] >= 100 and metrics[peak] > ceiling:
+                if metrics["normal_peak_pps_5s"] == 0:
+                    basis = "burst_with_silent_reference"
                 checks = [Bound(peak, 100)]
                 above_ceiling = True
                 evidence = {
                     k: metrics[k] for k in ("normal_" + peak, "normal_peak_pps_5s")
                 }
+        if label in ("dns_tunnel", "possible_beacon"):
+            for suffix in ("_5m", "_15m"):
+                longer = [
+                    Bound(b.metric + suffix, b.limit, b.upper)
+                    if b.metric != "unapproved_destination"
+                    else b
+                    for b in bounds
+                ]
+                if all(
+                    b.metric in metrics and b.accepts(metrics[b.metric]) for b in longer
+                ):
+                    checks = longer
+                    break
+        if label == "syn_flood":
+            upper = metrics.get("handshake_fraction_upper")
+            if "handshake_fraction" not in metrics and upper is not None:
+                # Only use a right-censored measurement when every possible
+                # completion outcome would satisfy the existing rule.
+                checks = [
+                    Bound("handshake_fraction_upper", b.limit, b.upper)
+                    if b.metric == "handshake_fraction" and b.accepts(upper)
+                    else b
+                    for b in checks
+                ]
         missing = [b.metric for b in checks if b.metric not in metrics]
+        if label in CORRELATION_SOURCES:
+            if not above_ceiling or any(
+                b.metric in metrics and not b.accepts(metrics[b.metric]) for b in checks
+            ):
+                continue
+            if context not in {"verified", "expected_change"}:
+                missing.append(
+                    "policy_freshness"
+                    if context == "stale_policy"
+                    else "fresh_correlated_telemetry"
+                )
         if missing:
             unavailable[label] = missing
-        elif above_ceiling and all(b.accepts(metrics[b.metric]) for b in checks):
+        elif (
+            context != "expected_change"
+            and above_ceiling
+            and all(b.accepts(metrics[b.metric]) for b in checks)
+        ):
             evidence.update({b.metric: metrics[b.metric] for b in checks})
-            findings.append(
-                {"label": label, "basis": "observed_pattern", "evidence": evidence}
-            )
+            findings.append({"label": label, "basis": basis, "evidence": evidence})
     for label, prefix in WAF.items():
         if "crs_rule_ids" not in observation:
             unavailable[label] = ["crs_rule_ids"]
@@ -208,13 +309,29 @@ def assess(observation):
                     "evidence": {"crs_rule_ids": hits},
                 }
             )
+    for item in findings:
+        if item["basis"] == "upstream_waf":
+            item["kind"] = "waf_signal"
+        elif item["label"] in DEGRADATION_PATTERNS:
+            item["kind"] = "degradation_pattern"
+        elif item["label"] in TRAFFIC_PATTERNS:
+            item["kind"] = "traffic_pattern"
+        else:
+            item["kind"] = "security_indicator"
+    unavailable_fraction = metrics.get("unavailable_fraction")
+    if not complete_observer(observation, "probe") or unavailable_fraction is None:
+        availability = "unmeasured"
+    else:
+        availability = "degraded" if unavailable_fraction > 0 else "reachable"
     evaluated = len(RULES) + len(WAF) - len(unavailable)
     return {
-        "ruleset": "passive-v2",
+        "ruleset": "passive-v5",
         "entity": observation["entity"],
         "start_s": observation["start_s"],
         "interval_s": observation["interval_s"],
         "evaluated": evaluated,
+        "availability": availability,
+        "scheduled_change": scheduled_change(observation),
         "findings": findings,
         "unassessed": unavailable,
     }

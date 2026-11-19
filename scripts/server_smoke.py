@@ -109,7 +109,9 @@ def native_smoke(root, container, env, run, window_path, model_config, journal, 
                     frame = capture[40:40+size]
                     record = struct.pack(order + 'IIII', 305, 0, size, wire) + frame
                     fixture = temp / 'journal.pcap'
-                    fixture.write_bytes(capture[:24] + record * 550)
+                    baseline = b"".join(struct.pack(order + 'IIII', minute*60+5, 0, size, wire) + frame
+                                        for minute in range(5))
+                    fixture.write_bytes(capture[:24] + baseline + record * 550)
                     metadata = temp / 'packets.jsonl'
                     execute([str(temp/'netwatch-sensor'),'replay','--input',str(fixture),'--output',str(metadata)])
                     entity=json.loads(metadata.read_text().splitlines()[0])['dst_ip']
@@ -122,7 +124,10 @@ def native_smoke(root, container, env, run, window_path, model_config, journal, 
                     operator=next(iter(json.loads(native_env['NETWATCH_OPERATOR_TOKENS']).values()))
                     status, page=get(f'http://127.0.0.1:{api_port}/v1/security/observations',operator)
                     assert status==200 and len(page['observations'])==1
-                    assert page['observations'][0]['assessment']['findings'][0]['label']=='packet_flood'
+                    assessment = page['observations'][0]['assessment']
+                    assert assessment['availability'] == 'unmeasured'
+                    assert assessment['findings'][0]['label'] == 'packet_flood'
+                    assert assessment['findings'][0]['kind'] == 'traffic_pattern'
                 if experiment:
                     launch([str(temp / 'netwatch-worker')])
                     return experiment(container, native_env, get)

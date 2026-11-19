@@ -1,0 +1,3 @@
+DROP INDEX predictions_target_recent_usable;
+DROP INDEX predictions_target_recent;
+DROP INDEX feature_windows_recent_receipt;

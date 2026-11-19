@@ -10,7 +10,7 @@ import (
 	"netwatch.local/netwatch/internal/contract"
 )
 
-// Export produces the shared traffic-v1 contract with explicit unavailable values.
+// Export produces the configured feature set with explicit unavailable values.
 func (e *Engine) Export(r Result, sensor, epoch string) (contract.Window, error) {
 	kind, entity := "host", e.config.Host.String()
 	if e.config.Service.IsValid() {
@@ -18,7 +18,7 @@ func (e *Engine) Export(r Result, sensor, epoch string) (contract.Window, error)
 	}
 	identity, _ := json.Marshal([]string{sensor, epoch, kind, entity, strconv.FormatInt(r.Start, 10)})
 	w := contract.Window{
-		SchemaVersion: 1, FeatureSetVersion: "traffic-v1",
+		SchemaVersion: 1, FeatureSetVersion: e.config.FeatureSet,
 		EventID:  fmt.Sprintf("%x", sha256.Sum256(identity)),
 		SensorID: sensor, CaptureEpoch: epoch, EntityType: kind, EntityID: entity,
 		WindowStartNS: strconv.FormatInt(r.Start, 10), WindowEndNS: strconv.FormatInt(r.End, 10),
@@ -28,6 +28,13 @@ func (e *Engine) Export(r Result, sensor, epoch string) (contract.Window, error)
 			"mean_interarrival_seconds": r.MeanInterarrival, "std_interarrival_seconds": r.StdInterarrival,
 		},
 		Quality: contract.Quality{Coverage: r.Coverage},
+	}
+	if e.config.FeatureSet == contract.TrafficV2 {
+		w.Features["tcp_age_mean_seconds"] = r.TCPAgeMean
+		w.Features["tcp_age_max_seconds"] = r.TCPAgeMax
+		w.Features["tcp_closed_duration_mean_seconds"] = r.TCPClosedMean
+		w.Features["tcp_closed_duration_max_seconds"] = r.TCPClosedMax
+		w.Features["tcp_age_known_start_fraction"] = r.TCPKnownStartFraction
 	}
 	for name, n := range map[string]uint64{
 		"in_packets": r.InPackets, "out_packets": r.OutPackets,

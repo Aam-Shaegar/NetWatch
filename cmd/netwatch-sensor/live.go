@@ -42,21 +42,28 @@ func interfaces() error {
 	return json.NewEncoder(os.Stdout).Encode(out)
 }
 
-func live(ctx context.Context, args []string) (returnErr error) {
+func live(ctx context.Context, args []string, logs *eventLog) (returnErr error) {
 	fs := flag.NewFlagSet("live", flag.ContinueOnError)
 	iface := fs.String("interface", "", "named capture interface")
 	filter := fs.String("filter", "", "required BPF filter")
-	output := fs.String("output", "", "new JSONL output")
+	output := fs.String("output", "", "new JSONL output; optional with a configured spool and endpoint")
 	record := fs.String("record-pcap", "", "optional laboratory raw recording (includes payload)")
 	sensor := fs.String("sensor", "live", "sensor ID")
+	bufferMiB := fs.Int("capture-buffer-mib", 16, "libpcap capture buffer in MiB (1–64)")
 	duration := fs.Duration("duration", 0, "optional capture duration; zero waits for a signal")
 	options := windowFlags(fs)
 	deliveryOptions := deliveryFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 0 || *iface == "" || *filter == "" || *output == "" || *duration < 0 {
-		return fmt.Errorf("live requires --interface, --filter and --output")
+	if fs.NArg() != 0 || *iface == "" || *filter == "" || *duration < 0 {
+		return fmt.Errorf("live requires --interface and --filter")
+	}
+	if *bufferMiB < 1 || *bufferMiB > 64 {
+		return fmt.Errorf("--capture-buffer-mib must be between 1 and 64")
+	}
+	if *output == "" && (*deliveryOptions.dir == "" || *deliveryOptions.endpoint == "") {
+		return fmt.Errorf("live requires --output or a configured --spool and --endpoint")
 	}
 	if *options.start != "" || *options.end != "" {
 		return fmt.Errorf("live measures its own coverage bounds")
@@ -75,17 +82,21 @@ func live(ctx context.Context, args []string) (returnErr error) {
 	if *deliveryOptions.dir != "" && engine == nil {
 		return fmt.Errorf("spooling requires --host or --service windows")
 	}
-	logs := newEventLog()
 	ctx, delivery, err := startDelivery(ctx, deliveryOptions, logs)
 	if err != nil {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, delivery.close()) }()
-	file, err := os.OpenFile(*output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
+	var file *os.File
+	var encoder *json.Encoder
+	if *output != "" {
+		file, err = os.OpenFile(*output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		encoder = json.NewEncoder(file)
 	}
-	defer file.Close()
 	var raw *os.File
 	if *record != "" {
 		raw, err = os.OpenFile(*record, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -97,9 +108,9 @@ func live(ctx context.Context, args []string) (returnErr error) {
 	// An untyped nil is required here: a typed nil *os.File is a non-nil io.Writer.
 	var source *capture.LiveSource
 	if raw == nil {
-		source, err = capture.OpenLive(*iface, *filter, *sensor, nil)
+		source, err = capture.OpenLive(*iface, *filter, *sensor, *bufferMiB<<20, nil)
 	} else {
-		source, err = capture.OpenLive(*iface, *filter, *sensor, raw)
+		source, err = capture.OpenLive(*iface, *filter, *sensor, *bufferMiB<<20, raw)
 	}
 	if err != nil {
 		return err
@@ -111,10 +122,9 @@ func live(ctx context.Context, args []string) (returnErr error) {
 		ctx, cancel = context.WithTimeout(ctx, *duration)
 		defer cancel()
 	}
-	if err = logs.Encode(map[string]any{"event": "live_started", "start_ns": fmt.Sprint(started), "epoch": *options.epoch, "interface": *iface, "filter": *filter}); err != nil {
+	if err = logs.Encode(map[string]any{"event": "live_started", "start_ns": fmt.Sprint(started), "epoch": *options.epoch, "interface": *iface, "filter": *filter, "capture_buffer_mib": *bufferMiB}); err != nil {
 		return err
 	}
-	encoder := json.NewEncoder(file)
 	counts := map[string]uint64{}
 	var total uint64
 	var stats capture.Stats
@@ -137,6 +147,7 @@ func live(ctx context.Context, args []string) (returnErr error) {
 		}
 		now := time.Now().UnixNano()
 		if engine != nil && (stats.Dropped > previous.Dropped || stats.InterfaceDropped > previous.InterfaceDropped) {
+			engine.InvalidateConnectionAges(now)
 			losses = append(losses, lossInterval{lastPoll, now, capture.Stats{Dropped: stats.Dropped - previous.Dropped, InterfaceDropped: stats.InterfaceDropped - previous.InterfaceDropped}})
 		}
 		lastPoll = now
@@ -164,8 +175,8 @@ func live(ctx context.Context, args []string) (returnErr error) {
 			if err = delivery.append(w); err != nil {
 				return err
 			}
-			if err = encoder.Encode(w); err != nil {
-				return err
+			if encoder != nil {
+				return encoder.Encode(w)
 			}
 			return nil
 		}
@@ -238,8 +249,10 @@ func live(ctx context.Context, args []string) (returnErr error) {
 			runErr = err
 		}
 	}
-	if err = file.Sync(); runErr == nil {
-		runErr = err
+	if file != nil {
+		if err = file.Sync(); runErr == nil {
+			runErr = err
+		}
 	}
 	if raw != nil {
 		if err = raw.Sync(); runErr == nil {

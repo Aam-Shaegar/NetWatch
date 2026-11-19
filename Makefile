@@ -3,10 +3,10 @@ UV ?= ./scripts/uv
 help:
 	@echo "Setup:      bootstrap configure doctor"
 	@echo "Build:      build test compose-check"
-	@echo "Services:   db-up db-down migrate api worker ml web"
+	@echo "Services:   work work-status work-logs work-stop cli (local dev: db-up migrate api worker ml web)"
 	@echo "Capture:    lab-up lab-down lab-smoke live-smoke fixtures"
 	@echo "Models:     collect dataset train compare"
-	@echo "Checks:     collection-smoke server-smoke spool-disk-smoke bench operations test-anomalies"
+	@echo "Checks:     test test-e2e test-acceptance collection-smoke server-smoke bench operations test-anomalies"
 configure:
 	python3 scripts/configure.py
 bootstrap:
@@ -41,6 +41,7 @@ compose-check: configure
 	docker compose -f deploy/lab/compose.yaml config --quiet
 	docker compose -f deploy/lab/compose.yaml -f deploy/lab/collection.yaml config --quiet
 	docker compose -f deploy/lab/compose.yaml -f deploy/lab/operations.yaml config --quiet
+	python3 scripts/stack.py check
 db-up: configure
 	docker compose --env-file .env -f deploy/compose.yaml up -d --wait
 db-down:
@@ -75,8 +76,23 @@ dataset:
 collection-smoke:
 	$(UV) run --project ml --locked python scripts/collection_smoke.py
 
-.PHONY: train
+.PHONY: work work-status work-logs work-stop cli train train-local test-e2e test-acceptance
+WORK_ENV ?= .env.work
+work:
+	python3 scripts/stack.py work start --env "$(WORK_ENV)"
+work-status:
+	python3 scripts/stack.py work status --env "$(WORK_ENV)"
+work-logs:
+	python3 scripts/stack.py work logs --env "$(WORK_ENV)"
+work-stop:
+	python3 scripts/stack.py work stop --env "$(WORK_ENV)"
+CLI_OUTPUT ?= bin/netwatch
+cli:
+	go build -trimpath -o "$(CLI_OUTPUT)" ./cmd/netwatch
 train:
+	python3 scripts/stack.py train "$(DATASET)" "$(OUTPUT)"
+
+train-local:
 	$(UV) run --project ml --locked python -m netwatch_ml.training.baselines "$(DATASET)" "$(OUTPUT)"
 
 .PHONY: compare
@@ -88,8 +104,9 @@ bench:
 	go test ./internal/window -run '^$$' -bench BenchmarkServiceWindows -benchtime=500000x -count=3
 
 OPERATIONS_SECONDS ?= 180
+OPERATIONS_LATENESS ?= 1s
 operations:
-	$(UV) run --project ml --locked python scripts/operations.py "$(ARTIFACT)" --seconds "$(OPERATIONS_SECONDS)"
+	$(UV) run --project ml --locked python scripts/operations.py "$(ARTIFACT)" --seconds "$(OPERATIONS_SECONDS)" --lateness "$(OPERATIONS_LATENESS)"
 
 spool-disk-smoke:
 	python3 scripts/spool_disk_smoke.py
@@ -100,6 +117,18 @@ ANOMALY_SERVICE ?= artifacts/tcp-service-patterns-v2
 ANOMALY_FORECAST ?= artifacts/step10-gru
 ANOMALY_TRAINING ?= data/processed/step7-16d38550a4d3/manifest.json
 ANOMALY_REPORT ?= outputs/anomaly-holdout.json
+ANOMALY_MODE ?=
 
 test-anomalies:
-	$(UV) run --project ml --locked python benchmarks/independent.py "$(ANOMALY_MANIFEST)" "$(ANOMALY_SERVICE)" "$(ANOMALY_FORECAST)" "$(ANOMALY_TRAINING)" "$(ANOMALY_REPORT)"
+	$(UV) run --project ml --locked python benchmarks/independent.py $(ANOMALY_MODE) "$(ANOMALY_MANIFEST)" "$(ANOMALY_SERVICE)" "$(ANOMALY_FORECAST)" "$(ANOMALY_TRAINING)" "$(ANOMALY_REPORT)"
+
+E2E_ARTIFACT ?= artifacts/tcp-service-patterns-v2
+E2E_REPORT ?= outputs/work-e2e.json
+E2E_POLICY ?= v1
+test-e2e:
+	python3 tests/e2e/work_stack.py "$(E2E_ARTIFACT)" "$(E2E_REPORT)" --policy "$(E2E_POLICY)"
+
+ACCEPTANCE_MANIFEST ?= data/holdout/detection/manifest.json
+ACCEPTANCE_REPORT ?= outputs/detection-acceptance.json
+test-acceptance:
+	python3 benchmarks/detection_acceptance.py "$(ACCEPTANCE_MANIFEST)" "$(E2E_ARTIFACT)" "$(ACCEPTANCE_REPORT)"

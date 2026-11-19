@@ -178,6 +178,7 @@ def run(args):
         ),
         network="isolated target eth0 TCP 8080",
         window_s=5,
+        capture_lateness=args.lateness,
         rates=[4] if args.pause else [5, 15, 3],
         phase_s=60,
     )
@@ -211,6 +212,8 @@ def run(args):
             "tcp port 8080",
             "--sensor",
             "smoke",
+            "--lateness",
+            args.lateness,
             "--output",
             "/output/windows.jsonl",
         )
@@ -355,6 +358,7 @@ def run(args):
             records=stop["records"],
             pps=stop["records"] / duration,
             capture=stats,
+            late_packets=stop.get("late_packets"),
             drop_fraction=stats["dropped"] / max(1, stats["received"]),
         )
         for _ in range(200):
@@ -367,6 +371,16 @@ def run(args):
             db,
             "SELECT percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM processed_at)-window_end_ns/1e9) FROM predictions JOIN feature_windows USING(event_id)",
         )
+        latency = query(
+            db,
+            """SELECT json_build_object(
+                'observation_to_receipt', percentile_cont(0.95) WITHIN GROUP
+                    (ORDER BY extract(epoch FROM received_at)-window_end_ns/1e9),
+                'receipt_to_prediction', percentile_cont(0.95) WITHIN GROUP
+                    (ORDER BY extract(epoch FROM processed_at-received_at)))
+                FROM predictions JOIN feature_windows USING(event_id)""",
+        )
+        report["pipeline_p95_seconds"] = json.loads(latency)
         report["incident_latency_s"] = query(
             db,
             "SELECT coalesce(json_agg(extract(epoch FROM detected_at)-detected_ns/1e9),'[]') FROM incidents",
@@ -428,6 +442,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--seconds", type=int, default=180)
+    parser.add_argument("--lateness", default="1s", help="sensor event-time reorder allowance")
     parser.add_argument(
         "--pause",
         action="store_true",

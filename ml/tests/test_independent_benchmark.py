@@ -71,3 +71,23 @@ def test_missing_manifest_exits_unsuccessfully_and_records_all_types(
     assert result["passed"] is False
     assert len(result["types"]) == 25
     assert {row["status"] for row in result["types"].values()} == {"missing coverage"}
+
+
+def test_previously_evaluated_manifest_requires_regression_mode(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"version": 1, "unseen_by_developers": False, "passive_sha256": {}})
+    )
+    with pytest.raises(ValueError, match="attestation"):
+        benchmark.evaluate(
+            manifest, tmp_path, tmp_path, tmp_path, benchmark.empty_report()
+        )
+    with pytest.raises(ValueError, match="frozen"):
+        benchmark.evaluate(
+            manifest,
+            tmp_path,
+            tmp_path,
+            tmp_path,
+            benchmark.empty_report(),
+            regression=True,
+        )

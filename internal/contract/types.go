@@ -1,5 +1,14 @@
 package contract
 
+const (
+	TrafficV1 = "traffic-v1"
+	TrafficV2 = "traffic-v2"
+)
+
+func IsTrafficFeatureSet(version string) bool {
+	return version == TrafficV1 || version == TrafficV2
+}
+
 // Window mirrors the versioned wire contract. Validate raw JSON before decoding.
 // Values that were not observable must remain null (nil), not zero.
 type Window struct {
@@ -27,9 +36,19 @@ type Classification struct {
 	Version     string   `json:"version"`
 }
 
+type DecisionDiagnostics struct {
+	ForestScore     float64  `json:"forest_score"`
+	ForestThreshold float64  `json:"forest_threshold"`
+	PatternLabel    string   `json:"pattern_label,omitempty"`
+	PatternRatio    *float64 `json:"pattern_ratio,omitempty"`
+}
+
 type Prediction struct {
-	Reason         string          `json:"reason,omitempty"`
-	Classification *Classification `json:"classification,omitempty"`
+	Observational     bool                 `json:"observational,omitempty"`
+	Diagnostics       *DecisionDiagnostics `json:"diagnostics,omitempty"`
+	Reason            string               `json:"reason,omitempty"`
+	UnavailableReason string               `json:"unavailable_reason,omitempty"`
+	Classification    *Classification      `json:"classification,omitempty"`
 
 	SchemaVersion     int      `json:"schema_version"`
 	EventID           string   `json:"event_id"`

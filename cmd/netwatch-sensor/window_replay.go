@@ -13,21 +13,23 @@ import (
 
 type windowOptions struct {
 	host, service, protocol, epoch, start, end *string
+	featureSet                                 *string
 	lateness                                   *time.Duration
 	unique, pending                            *int
 }
 
 func windowFlags(fs *flag.FlagSet) windowOptions {
 	return windowOptions{
-		host:     fs.String("host", "", "aggregate windows for this host"),
-		service:  fs.String("service", "", "aggregate windows for IP:port"),
-		protocol: fs.String("protocol", "TCP", "service protocol"),
-		epoch:    fs.String("epoch", "", "required window observation epoch"),
-		start:    fs.String("coverage-start", "", "declared continuous capture start, ns"),
-		end:      fs.String("coverage-end", "", "declared continuous capture end, ns (exclusive)"),
-		lateness: fs.Duration("lateness", time.Second, "allowed packet lateness"),
-		unique:   fs.Int("max-unique", 100000, "maximum distinct values per window"),
-		pending:  fs.Int("max-pending", 100000, "maximum buffered packets"),
+		host:       fs.String("host", "", "aggregate windows for this host"),
+		service:    fs.String("service", "", "aggregate windows for IP:port"),
+		protocol:   fs.String("protocol", "TCP", "service protocol"),
+		featureSet: fs.String("feature-set", "traffic-v1", "window feature set: traffic-v1 or traffic-v2"),
+		epoch:      fs.String("epoch", "", "required window observation epoch"),
+		start:      fs.String("coverage-start", "", "declared continuous capture start, ns"),
+		end:        fs.String("coverage-end", "", "declared continuous capture end, ns (exclusive)"),
+		lateness:   fs.Duration("lateness", time.Second, "allowed packet lateness"),
+		unique:     fs.Int("max-unique", 100000, "maximum distinct values per window"),
+		pending:    fs.Int("max-pending", 100000, "maximum buffered packets"),
 	}
 }
 
@@ -38,7 +40,7 @@ func (o windowOptions) engine() (*window.Engine, error) {
 	if *o.epoch == "" {
 		return nil, fmt.Errorf("window output requires --epoch")
 	}
-	c := window.Config{Protocol: *o.protocol, Lateness: *o.lateness, MaxUnique: *o.unique, MaxPending: *o.pending}
+	c := window.Config{Protocol: *o.protocol, FeatureSet: *o.featureSet, Lateness: *o.lateness, MaxUnique: *o.unique, MaxPending: *o.pending}
 	var err error
 	if *o.host != "" {
 		c.Host, err = netip.ParseAddr(*o.host)

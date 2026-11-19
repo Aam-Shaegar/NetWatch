@@ -39,7 +39,7 @@ func TestLiveRejectsInvalidArgumentsBeforeOpeningCapture(t *testing.T) {
 		{"--interface", "eth0", "--filter", "tcp", "--output", "unused", "--coverage-start", "1"},
 		{"--interface", "eth0", "--filter", "tcp", "--output", "unused", "--service", "unset:8080"},
 	} {
-		if err := live(context.Background(), args); err == nil {
+		if err := live(context.Background(), args, newTestLog()); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}

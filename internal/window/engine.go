@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"netwatch.local/netwatch/internal/contract"
 	"netwatch.local/netwatch/internal/decode"
 	"netwatch.local/netwatch/internal/flow"
 )
@@ -21,6 +22,7 @@ type Config struct {
 	Host                       netip.Addr
 	Service                    netip.AddrPort
 	Protocol                   string
+	FeatureSet                 string
 	Lateness                   time.Duration
 	MaxUnique                  int
 	MaxPending                 int
@@ -43,6 +45,9 @@ type Result struct {
 	SYNFraction, RSTFraction               *float64
 	MeanPacketSize, StdPacketSize          *float64
 	MeanInterarrival, StdInterarrival      *float64
+	TCPAgeMean, TCPAgeMax                  *float64
+	TCPClosedMean, TCPClosedMax            *float64
+	TCPKnownStartFraction                  *float64
 	Coverage                               string
 	LatePackets, StateEvictions            uint64
 }
@@ -83,6 +88,7 @@ type accumulator struct {
 	lastPacket       int64
 	tcp, syn, rst    uint64
 	gap              bool
+	connections      connectionAges
 }
 
 type event struct {
@@ -96,12 +102,22 @@ type pending []event
 
 func (p pending) Len() int { return len(p) }
 func (p pending) Less(i, j int) bool {
-	a, b := p[i], p[j]
+	a, b := &p[i], &p[j]
 	if a.at != b.at {
 		return a.at < b.at
 	}
-	return a.tie < b.tie
+	return a.tieKey() < b.tieKey()
 }
+
+// Serialize only on equal timestamps, preserving the existing order for ties.
+func (e *event) tieKey() string {
+	if e.tie == "" {
+		data, _ := json.Marshal(e.p)
+		e.tie = string(data)
+	}
+	return e.tie
+}
+
 func (p pending) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
 func (p *pending) Push(v any)   { *p = append(*p, v.(event)) }
 func (p *pending) Pop() any {
@@ -122,6 +138,7 @@ type Engine struct {
 	LatePackets uint64
 	finished    bool
 	restarted   bool
+	agesSince   int64
 }
 
 func New(c Config) (*Engine, error) {
@@ -130,6 +147,12 @@ func New(c Config) (*Engine, error) {
 	}
 	if c.Service.IsValid() && c.Protocol != "TCP" && c.Protocol != "UDP" {
 		return nil, fmt.Errorf("service requires TCP or UDP")
+	}
+	if c.FeatureSet == "" {
+		c.FeatureSet = contract.TrafficV1
+	}
+	if !contract.IsTrafficFeatureSet(c.FeatureSet) {
+		return nil, fmt.Errorf("unsupported feature set %q", c.FeatureSet)
 	}
 	if (c.CoverageStart == nil) != (c.CoverageEnd == nil) {
 		return nil, fmt.Errorf("coverage needs both bounds")
@@ -161,6 +184,7 @@ func (e *Engine) Push(p decode.Meta) ([]Result, error) {
 	}
 	if at < e.watermark {
 		e.LatePackets++
+		e.InvalidateConnectionAges(e.watermark)
 		// A published window is immutable. Flag the first still-open interval
 		// when the original event-time interval has already closed.
 		e.bucket(max(at/width*width, e.watermark/width*width)).LatePackets++
@@ -190,8 +214,7 @@ func (e *Engine) Push(p decode.Meta) ([]Result, error) {
 		v := *p.TCPFlags
 		p.TCPFlags = &v
 	}
-	serialized, _ := json.Marshal(p)
-	heap.Push(&e.queue, event{at: at, p: p, tie: string(serialized)})
+	heap.Push(&e.queue, event{at: at, p: p})
 	e.watermark = max(e.watermark, at-int64(e.config.Lateness))
 	return e.drain(false), nil
 }
@@ -219,12 +242,13 @@ func (e *Engine) drain(all bool) []Result {
 		w.Peers, w.DestinationPorts, w.ActiveFlows = w.peers.count(), w.ports.count(), w.flows.count()
 		w.MeanPacketSize, w.StdPacketSize = w.sizes.values()
 		w.MeanInterarrival, w.StdInterarrival = w.intervals.values()
+		w.connections.export(&w.Result)
 		w.SYNFraction, w.RSTFraction = fraction(w.syn, w.tcp), fraction(w.rst, w.tcp)
 		w.Coverage = "partial"
 		if e.config.CoverageStart != nil && w.Start >= *e.config.CoverageStart && w.End <= *e.config.CoverageEnd {
 			w.Coverage = "complete"
 		}
-		if w.gap || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
+		if w.gap || w.connections.overflow || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
 			w.Coverage = "gap"
 		}
 		out = append(out, w.Result)
@@ -239,17 +263,20 @@ func (e *Engine) accumulate(ev event) {
 	if p.Status != "decoded" {
 		if p.Status != "non_ip" {
 			e.bucket(ev.at).gap = true
+			e.InvalidateConnectionAges(ev.at + 1)
 		}
 		return
 	}
 	src, err := netip.ParseAddr(p.Src)
 	if err != nil {
 		e.bucket(ev.at).gap = true
+		e.InvalidateConnectionAges(ev.at + 1)
 		return
 	}
 	dst, err := netip.ParseAddr(p.Dst)
 	if err != nil {
 		e.bucket(ev.at).gap = true
+		e.InvalidateConnectionAges(ev.at + 1)
 		return
 	}
 	in, out := dst == e.config.Host, src == e.config.Host
@@ -300,11 +327,21 @@ func (e *Engine) accumulate(ev event) {
 	}
 	w.flows.add(key, e.config.MaxUnique)
 	before := e.tracker.StateEvictions
-	_, changes := e.tracker.ObserveChanges(p)
+	state, changes := e.tracker.ObserveChanges(p)
 	w.NewTCPAttempts += changes.Attempts
 	w.EstablishedTCPAttempts += changes.Established
 	w.CompletedFlows += changes.Completed
 	w.StateEvictions += e.tracker.StateEvictions - before
+	if e.config.FeatureSet == contract.TrafficV2 && p.Protocol == "TCP" && state != nil &&
+		(state.ClosedBy == "" || changes.Completed != 0) {
+		w.connections.observe(state, ev.at, e.agesSince, changes.Completed != 0, e.config.MaxUnique)
+	}
+}
+
+// InvalidateConnectionAges marks starts before a capture discontinuity as
+// censored. A new observed SYN can establish a fresh age after the gap.
+func (e *Engine) InvalidateConnectionAges(at int64) {
+	e.agesSince = max(e.agesSince, at)
 }
 
 // Restart ends the current observation epoch and discards connection history.
@@ -315,6 +352,7 @@ func (e *Engine) Restart() []Result {
 		out[i].Coverage = "gap"
 	}
 	e.tracker = flow.Tracker{}
+	e.agesSince = 0
 	e.config.CoverageStart, e.config.CoverageEnd = nil, nil
 	e.LatePackets = 0
 	e.restarted = true

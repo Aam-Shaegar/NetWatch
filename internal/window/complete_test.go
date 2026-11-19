@@ -70,6 +70,60 @@ func TestConnectionEventsAndPopulationStatistics(t *testing.T) {
 	}
 }
 
+func TestTCPConnectionAges(t *testing.T) {
+	opening := fixture(t, "syn-retry.pcap")[0]
+	base, _ := strconv.ParseInt(opening.Timestamp, 10, 64)
+	packet := func(second int64, flags uint8) decode.Meta {
+		p := opening
+		p.Timestamp = strconv.FormatInt(base+second*1e9, 10)
+		p.TCPFlags = &flags
+		return p
+	}
+	midstream := packet(3, 16)
+	otherPort := *midstream.SrcPort + 1
+	midstream.SrcPort = &otherPort
+	c := config()
+	c.FeatureSet = contract.TrafficV2
+	packets := []decode.Meta{packet(1, 2), packet(2, 2), midstream,
+		packet(5, 16), packet(8, 4), packet(9, 4), packet(11, 2), packet(13, 4)}
+	rows := run(t, c, packets)
+	check := func(actual *float64, expected float64) {
+		t.Helper()
+		if actual == nil || *actual != expected {
+			t.Fatalf("expected %v, got %v", expected, actual)
+		}
+	}
+	check(rows[0].TCPAgeMean, 1)
+	check(rows[0].TCPAgeMax, 1)
+	check(rows[0].TCPKnownStartFraction, 0.5)
+	if rows[0].TCPClosedMean != nil {
+		t.Fatal("open connections cannot contribute a closed duration")
+	}
+	check(rows[1].TCPAgeMean, 7)
+	check(rows[1].TCPClosedMean, 7)
+	check(rows[1].TCPClosedMax, 7)
+	check(rows[2].TCPAgeMean, 2)
+	check(rows[2].TCPClosedMean, 2)
+	e, _ := New(c)
+	exported, err := e.Export(rows[1], "sensor", "epoch")
+	if err != nil || exported.FeatureSetVersion != contract.TrafficV2 {
+		t.Fatalf("traffic-v2 export failed: %v", err)
+	}
+	check(exported.Features["tcp_closed_duration_mean_seconds"], 7)
+
+	for _, p := range []decode.Meta{packet(1, 2), packet(6, 16)} {
+		if _, err := e.Push(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.InvalidateConnectionAges(base + 5e9)
+	last := e.Finish()[0]
+	if last.TCPAgeMean != nil || last.TCPClosedMax != nil {
+		t.Fatal("pre-gap SYN supplied an age after a discontinuity")
+	}
+	check(last.TCPKnownStartFraction, 0)
+}
+
 func TestMultipleClientsAndNulls(t *testing.T) {
 	p := fixture(t, "flow-directions.pcap")
 	second := p[0]

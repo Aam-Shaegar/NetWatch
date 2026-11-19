@@ -38,6 +38,30 @@ paths:
         '502': {description: Invalid response from classifier}
         '503': {description: Classification or storage unavailable}
   /v1/security/observations:
+    post:
+      summary: Commit a minute observation and queue background assessment
+      security: [{sensorToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './security-observation.schema.json'}
+      responses:
+        '202':
+          description: Durable job receipt; equal submissions return the same job ID
+          headers:
+            Location: {schema: {type: string}}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id]
+                properties:
+                  job_id: {type: string}
+        '401': {description: Invalid sensor credentials}
+        '413': {description: Request exceeds 64 KiB}
+        '422': {description: Invalid observation}
+        '503': {description: Storage unavailable}
     get:
       summary: Review observations and findings in descending receipt order
       security: [{operatorToken: []}]
@@ -48,6 +72,17 @@ paths:
         '200': {description: Up to 50 observations with evidence and next page cursor}
         '400': {description: Invalid cursor}
         '401': {description: Invalid operator credentials}
+        '503': {description: Storage unavailable}
+  /v1/security/observations/{job_id}:
+    get:
+      summary: Read the status of a job owned by the calling sensor
+      security: [{sensorToken: []}]
+      parameters:
+        - {in: path, name: job_id, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Job state and optional assessment and observation ID}
+        '401': {description: Invalid sensor credentials}
+        '404': {description: Job absent or outside the sensor's scope}
         '503': {description: Storage unavailable}
   /v1/windows:
     post:
@@ -127,6 +162,42 @@ paths:
                         processed_at: {type: string, format: date-time}
         '401': {description: Invalid sensor token}
         '503': {description: Storage unavailable}
+  /v1/pipeline/status:
+    get:
+      summary: Inspect capture freshness, active detector output and durable queues
+      security: [{operatorToken: []}]
+      responses:
+        '200':
+          description: Operational snapshot with event and receipt times separated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [observed_at, target, capture, prediction, usable_prediction, inference, assessment, projection_pending, projection_oldest_age_s, projection_gaps]
+                properties:
+                  observed_at: {type: string, format: date-time}
+                  target:
+                    type: object
+                    required: [model_id, policy_version]
+                    properties:
+                      model_id: {type: string}
+                      policy_version: {type: string}
+                  capture:
+                    type: [object, 'null']
+                    description: Most recently received window and its recorded capture quality
+                  prediction:
+                    type: [object, 'null']
+                    description: Most recent prediction for the active model and policy, including abstention
+                  usable_prediction:
+                    type: [object, 'null']
+                    description: Latest normal or anomalous prediction and the age of its source event
+                  inference: {type: object}
+                  assessment: {type: object}
+                  projection_pending: {type: integer, minimum: 0}
+                  projection_oldest_age_s: {type: [number, 'null']}
+                  projection_gaps: {type: integer, minimum: 0}
+        '401': {description: Invalid operator credentials}
+        '503': {description: Storage unavailable}
   /v1/incidents:
     get:
       summary: List incidents in descending ID order
@@ -171,7 +242,7 @@ paths:
                 required: [schema_version, feature_set_version, rule, incident, events, more]
                 properties:
                   schema_version: {const: 1}
-                  feature_set_version: {const: traffic-v1}
+                  feature_set_version: {enum: [traffic-v1, traffic-v2]}
                   rule: {type: string}
                   incident: {$ref: '#/components/schemas/Incident'}
                   events:
@@ -225,6 +296,9 @@ components:
         detected_at: {type: string, format: date-time}
         last_ns: {type: string}
         closed_ns: {type: [string, 'null']}
+        estimated_end_ns: {type: [string, 'null']}
+        interrupted_ns: {type: [string, 'null']}
+        closed_at: {type: [string, 'null'], format: date-time}
         ack_at: {type: [string, 'null'], format: date-time}
         ack_by: {type: [string, 'null']}
   securitySchemes:

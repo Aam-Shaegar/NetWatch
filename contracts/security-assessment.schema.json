@@ -11,6 +11,15 @@
     "findings",
     "unassessed"
   ],
+  "if": {
+    "properties": { "ruleset": { "const": "passive-v5" } }
+  },
+  "then": {
+    "required": ["availability", "scheduled_change"],
+    "properties": {
+      "findings": { "items": { "required": ["kind"] } }
+    }
+  },
   "properties": {
     "ruleset": {
       "type": "string",
@@ -33,6 +42,12 @@
       "type": "integer",
       "minimum": 0
     },
+    "availability": {
+      "enum": ["reachable", "degraded", "unmeasured"]
+    },
+    "scheduled_change": {
+      "type": "boolean"
+    },
     "findings": {
       "type": "array",
       "items": {
@@ -45,6 +60,9 @@
         "properties": {
           "label": {
             "type": "string"
+          },
+          "kind": {
+            "enum": ["traffic_pattern", "degradation_pattern", "security_indicator", "waf_signal"]
           },
           "basis": {
             "type": "string"

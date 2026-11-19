@@ -72,6 +72,14 @@ func incidentRoutes(mux *http.ServeMux, c Config) {
 		}
 		sendJSON(w, 200, map[string]any{"observations": items, "next": next})
 	}))
+	mux.HandleFunc("GET /v1/pipeline/status", protect(func(w http.ResponseWriter, r *http.Request, _ string) {
+		metrics, err := c.Store.PipelineStatus(r.Context(), c.ModelID, c.PolicyVersion)
+		if err != nil {
+			failure(w, err)
+			return
+		}
+		sendJSON(w, 200, metrics)
+	}))
 	mux.HandleFunc("GET /v1/incidents", protect(func(w http.ResponseWriter, r *http.Request, _ string) {
 		q := r.URL.Query()
 		f := store.IncidentFilter{Entity: q.Get("entity"), Model: q.Get("model")}

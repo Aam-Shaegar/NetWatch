@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from netwatch_ml.models.detector import WIDTH, matrix, transform, supported_window
+from netwatch_ml.models.detector import WIDTH, matrix, transform, supported_window, window_unavailability
 
 HISTORY = 12
 STEP = 5_000_000_000
@@ -67,8 +67,11 @@ def unpack(payload):
 @torch.inference_mode()
 def predict_sequence(window, history, bundle):
     result = dict(schema_version=1, event_id=window['event_id'], model_id=bundle['model_id'],
-                  feature_set_version='traffic-v1', status='insufficient_data', score=None, threshold=None)
-    if not supported_window(window):
+                  feature_set_version=window['feature_set_version'], status='insufficient_data', score=None, threshold=None,
+                  observational=True)
+    reason = window_unavailability(window)
+    if reason:
+        result['unavailable_reason'] = reason
         return result
     key = ('sensor_id', 'capture_epoch', 'entity_type', 'entity_id')
     ordered = [*history, window]

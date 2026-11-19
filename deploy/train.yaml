@@ -1,0 +1,30 @@
+name: netwatch-train
+
+services:
+  trainer:
+    image: ${NETWATCH_ML_IMAGE:-netwatch-ml:local}
+    build:
+      context: ..
+      dockerfile: deploy/ml/Dockerfile
+    command: ["python", "-m", "netwatch_ml.training.${NETWATCH_TRAIN_MODULE:-baselines}", "${NETWATCH_TRAIN_INPUT:-/dataset}", "/output/${NETWATCH_TRAIN_OUTPUT_NAME:-model}"]
+    network_mode: none
+    user: "${NETWATCH_RUN_UID:-65532}:${NETWATCH_RUN_GID:-65532}"
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - type: bind
+        source: ${NETWATCH_DATASET_DIR:?Set the dataset directory}
+        target: /dataset
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${NETWATCH_TRAIN_OUTPUT_DIR:?Set the parent directory for training outputs}
+        target: /output
+        bind: {create_host_path: false}
+    logging:
+      driver: local
+      options:
+        max-size: 20m
+        max-file: "5"

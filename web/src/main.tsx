@@ -14,6 +14,8 @@ type Incident = {
   detected_ns: string;
   last_ns: string;
   closed_ns: string | null;
+  interrupted_ns?: string | null;
+  estimated_end_ns?: string | null;
   ack_by: string | null;
   ack_at: string | null;
 };
@@ -27,6 +29,13 @@ type Evidence = {
     status: string;
     score: number | null;
     threshold: number | null;
+    unavailable_reason?: string;
+    diagnostics?: {
+      forest_score: number;
+      forest_threshold: number;
+      pattern_label?: string;
+      pattern_ratio?: number;
+    };
     classification?: {
       label: string;
       probability: number | null;
@@ -52,7 +61,17 @@ const kinds: Record<string, string> = {
   closed: "Закрытие",
   signal: "Превышение",
   unknown: "Нет оценки",
+  gap: "Истекло ожидание оценки",
   observed: "Наблюдение",
+};
+
+const unavailableReasons: Record<string, string> = {
+  feature_set_mismatch: "Другая версия признаков",
+  outside_model_scope: "Сервис вне профиля модели",
+  capture_loss: "Потери при наблюдении",
+  incomplete_coverage: "Неполное наблюдение",
+  unverified_capture_quality: "Потери захвата неизвестны",
+  prediction_timeout: "Оценка не поступила вовремя",
 };
 
 const labels: Record<string, string> = {
@@ -101,6 +120,16 @@ function EvidenceTable({ events }: { events: Evidence[] }) {
             </td>
             <td>
               {fmt(e.prediction.score)} / {fmt(e.prediction.threshold)}
+              {e.prediction.diagnostics && (
+                <small>
+                  <br />
+                  Лес {fmt(e.prediction.diagnostics.forest_score)} /{" "}
+                  {fmt(e.prediction.diagnostics.forest_threshold)}
+                  {e.prediction.diagnostics.pattern_ratio != null &&
+                    " · правило ×" +
+                      fmt(e.prediction.diagnostics.pattern_ratio)}
+                </small>
+              )}
             </td>
             <td>{kinds[e.kind]}</td>
             <td>
@@ -118,7 +147,7 @@ function EvidenceTable({ events }: { events: Evidence[] }) {
                   <small>{e.prediction.classification.version}</small>
                 </>
               ) : (
-                "—"
+                unavailableReasons[e.prediction.unavailable_reason ?? ""] ?? "—"
               )}
             </td>
           </tr>
@@ -362,7 +391,7 @@ function App() {
                       Инцидент №{i.id} · {i.entity}
                     </button>{" "}
                     <span>
-                      {i.closed_ns ? "Закрыт" : "Открыт"} ·{" "}
+                      {i.interrupted_ns ? "Наблюдение прервано" : i.closed_ns ? "Закрыт" : "Открыт"} ·{" "}
                       {when(i.detected_ns)} UTC
                     </span>
                   </li>
@@ -414,9 +443,16 @@ function App() {
                   Политика: card.incident.policy,
                   "Первый сигнал (UTC)": when(card.incident.first_ns),
                   "Обнаружен (UTC)": when(card.incident.detected_ns),
-                  "Закрыт (UTC)": card.incident.closed_ns
-                    ? when(card.incident.closed_ns)
-                    : "Открыт",
+                  "Оценка конца аномалии (UTC)": card.incident.estimated_end_ns
+                    ? when(card.incident.estimated_end_ns)
+                    : "—",
+                  "Состояние": card.incident.interrupted_ns
+                    ? "Наблюдение прервано"
+                    : card.incident.closed_ns ? "Закрыт" : "Открыт",
+                  "Закрыт (UTC)": card.incident.closed_ns ? when(card.incident.closed_ns) : "—",
+                  ...(card.incident.interrupted_ns && {
+                    "Наблюдение прервано (UTC)": when(card.incident.interrupted_ns),
+                  }),
                   Просмотр: card.incident.ack_by || "Ожидает подтверждения",
                 }).map(([k, v]) => (
                   <div key={k}>

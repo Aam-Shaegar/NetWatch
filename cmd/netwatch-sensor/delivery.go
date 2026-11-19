@@ -7,21 +7,38 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
-	"sync"
 	"time"
 
 	"netwatch.local/netwatch/internal/spool"
 	"netwatch.local/netwatch/internal/transport"
 )
 
-type eventLog struct {
-	mu      sync.Mutex
-	encoder *json.Encoder
-}
+type eventLog struct{ logger *slog.Logger }
 
-func newEventLog() *eventLog           { return &eventLog{encoder: json.NewEncoder(os.Stderr)} }
-func (l *eventLog) Encode(v any) error { l.mu.Lock(); defer l.mu.Unlock(); return l.encoder.Encode(v) }
+func (l *eventLog) Encode(fields map[string]any) error {
+	event, _ := fields["event"].(string)
+	level := slog.LevelInfo
+	switch event {
+	case "delivery_failed":
+		level = slog.LevelError
+	case "delivery_retry", "spool_overflow":
+		level = slog.LevelWarn
+	}
+	handler := l.logger.Handler()
+	ctx := context.Background()
+	if !handler.Enabled(ctx, level) {
+		return nil
+	}
+	record := slog.NewRecord(time.Now(), level, event, 0)
+	for key, value := range fields {
+		if key != "event" {
+			record.AddAttrs(slog.Any(key, value))
+		}
+	}
+	return handler.Handle(ctx, record)
+}
 
 type deliveryOptions struct {
 	dir, endpoint                           *string
@@ -49,6 +66,7 @@ func (o deliveryOptions) sender(q *spool.Queue, log *eventLog) (*transport.Sende
 	config := transport.DefaultConfig()
 	config.Endpoint = *o.endpoint
 	config.Token = os.Getenv("NETWATCH_SENSOR_TOKEN")
+	config.TrustedCAPEM = os.Getenv("NETWATCH_SENSOR_CA_PEM")
 	config.Timeout = *o.timeout
 	config.AllowInsecureHTTP = *o.insecure
 	sender, err := transport.New(q, config)
@@ -130,7 +148,7 @@ func (d *delivery) close() error {
 }
 
 // queueCommand imports replay output, drains a queue, or inspects persistent health.
-func queueCommand(ctx context.Context, command string, args []string) error {
+func queueCommand(ctx context.Context, command string, args []string, log *eventLog) error {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	o := deliveryFlags(fs)
 	input := fs.String("input", "", "window JSONL file (enqueue only)")
@@ -167,7 +185,6 @@ func queueCommand(ctx context.Context, command string, args []string) error {
 		return err
 	}
 	defer q.Close()
-	log := newEventLog()
 	if command == "spool-status" {
 		return json.NewEncoder(os.Stdout).Encode(q.Stats())
 	}
