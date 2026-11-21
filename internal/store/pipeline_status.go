@@ -9,7 +9,16 @@ import (
 // It reports receipt and event ages separately so that replay or delayed delivery cannot look live.
 func (s *Store) PipelineStatus(ctx context.Context, model, policy string) (json.RawMessage, error) {
 	var metrics json.RawMessage
-	err := s.Pool.QueryRow(ctx, `WITH snapshot AS (SELECT statement_timestamp() AS at)
+	err := s.Pool.QueryRow(ctx, `WITH snapshot AS (SELECT statement_timestamp() AS at),
+ latest_prediction AS (
+  (SELECT event_id,payload->>'status' AS status,
+   coalesce(payload->>'unavailable_reason',payload->>'reason') AS reason,processed_at
+   FROM predictions WHERE model_id=$1 AND policy_version=$2 ORDER BY processed_at DESC,event_id DESC LIMIT 1)
+  UNION ALL
+  (SELECT event_id,CASE status WHEN 'incident' THEN 'anomalous' ELSE status END,
+   payload->>'reason',decided_at FROM catalog_decisions WHERE model_id=$1 AND policy_version=$2 AND status<>'no_match'
+   ORDER BY decided_at DESC,event_id DESC LIMIT 1)
+ )
  SELECT jsonb_build_object(
  'observed_at',snapshot.at,
  'target',jsonb_build_object('model_id',$1::text,'policy_version',$2::text),
@@ -18,15 +27,19 @@ func (s *Store) PipelineStatus(ctx context.Context, model, policy string) (json.
    'event_age_s',extract(epoch FROM snapshot.at)-window_end_ns/1e9,
    'quality',payload->'quality','feature_set_version',payload->>'feature_set_version')
   FROM feature_windows ORDER BY received_at DESC,event_id DESC LIMIT 1),
- 'prediction',(SELECT jsonb_build_object('status',payload->>'status',
-   'unavailable_reason',coalesce(payload->>'unavailable_reason',payload->>'reason'),
+ 'prediction',(SELECT jsonb_build_object('status',status,'unavailable_reason',reason,
    'processed_at',processed_at,'age_s',extract(epoch FROM snapshot.at-processed_at))
-  FROM predictions WHERE model_id=$1 AND policy_version=$2 ORDER BY processed_at DESC,event_id DESC LIMIT 1),
+  FROM latest_prediction ORDER BY processed_at DESC,event_id DESC LIMIT 1),
  'usable_prediction',(SELECT jsonb_build_object('processed_at',p.processed_at,
    'event_age_s',extract(epoch FROM snapshot.at)-w.window_end_ns/1e9,
    'processing_delay_s',extract(epoch FROM p.processed_at)-w.window_end_ns/1e9)
-  FROM predictions p JOIN feature_windows w USING(event_id) WHERE p.model_id=$1 AND p.policy_version=$2
-   AND p.payload->>'status' IN ('normal','anomalous') ORDER BY p.processed_at DESC,p.event_id DESC LIMIT 1),
+  FROM (
+   (SELECT event_id,processed_at FROM predictions WHERE model_id=$1 AND policy_version=$2
+    AND payload->>'status' IN ('normal','anomalous') ORDER BY processed_at DESC,event_id DESC LIMIT 1)
+   UNION ALL
+   (SELECT event_id,decided_at FROM catalog_decisions WHERE model_id=$1 AND policy_version=$2
+    AND status IN ('normal','incident') ORDER BY decided_at DESC,event_id DESC LIMIT 1)
+  ) p JOIN feature_windows w USING(event_id) ORDER BY p.processed_at DESC,p.event_id DESC LIMIT 1),
  'inference',(SELECT jsonb_build_object('queued',count(*),'retrying',count(*) FILTER (WHERE last_error IS NOT NULL),
    'oldest_age_s',extract(epoch FROM snapshot.at-min(created_at))) FROM inference_jobs WHERE status<>'done'),
  'assessment',(SELECT jsonb_build_object('queued',count(*) FILTER (WHERE status IN ('pending','leased')),

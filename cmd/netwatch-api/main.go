@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"netwatch.local/netwatch/internal/api"
+	"netwatch.local/netwatch/internal/sensorrpc"
 	"netwatch.local/netwatch/internal/store"
 	"netwatch.local/netwatch/internal/telemetry"
 )
@@ -53,9 +54,12 @@ func run(log *slog.Logger) error {
 	if err = db.Ready(startup); err != nil {
 		return err
 	}
+	grpcAddress := os.Getenv("NETWATCH_GRPC_LISTEN")
 	var tokens map[string]string
-	if json.Unmarshal([]byte(os.Getenv("NETWATCH_SENSOR_TOKENS")), &tokens) != nil {
-		return fmt.Errorf("NETWATCH_SENSOR_TOKENS must map sensor IDs to tokens")
+	if raw := os.Getenv("NETWATCH_SENSOR_TOKENS"); raw != "" {
+		if json.Unmarshal([]byte(raw), &tokens) != nil {
+			return fmt.Errorf("NETWATCH_SENSOR_TOKENS must map sensor IDs to tokens")
+		}
 	}
 	policy := os.Getenv("NETWATCH_POLICY_VERSION")
 	if policy == "" {
@@ -67,7 +71,8 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("invalid operator configuration")
 		}
 	}
-	handler, err := api.New(api.Config{Store: db, PrivateCompose: os.Getenv("NETWATCH_PRIVATE_COMPOSE") == "true", SecurityEndpoint: os.Getenv("NETWATCH_SECURITY_ENDPOINT"), Tokens: tokens, Operators: operators, WebDir: os.Getenv("NETWATCH_WEB_DIR"), ModelID: os.Getenv("NETWATCH_MODEL_ID"), PolicyVersion: policy})
+	modelID := os.Getenv("NETWATCH_MODEL_ID")
+	handler, err := api.New(api.Config{Store: db, SensorRPC: grpcAddress != "", PrivateCompose: os.Getenv("NETWATCH_PRIVATE_COMPOSE") == "true", SecurityEndpoint: os.Getenv("NETWATCH_SECURITY_ENDPOINT"), Tokens: tokens, Operators: operators, WebDir: os.Getenv("NETWATCH_WEB_DIR"), ModelID: modelID, PolicyVersion: policy})
 	if err != nil {
 		return err
 	}
@@ -96,6 +101,9 @@ func run(log *slog.Logger) error {
 		}
 		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{certificates}, MinVersion: tls.VersionTLS12}
 	}
+	if grpcAddress != "" && srv.TLSConfig == nil {
+		return fmt.Errorf("gRPC sensor endpoint requires TLS certificates")
+	}
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -104,6 +112,31 @@ func run(log *slog.Logger) error {
 	health, err := telemetry.StartHealth(ctx, healthAddress, db.Ready)
 	if err != nil {
 		return err
+	}
+	grpcDone := make(chan error, 1)
+	shutdownGRPC := func(context.Context) {}
+	if grpcAddress != "" {
+		grpcListener, err := net.Listen("tcp", grpcAddress)
+		if err != nil {
+			return err
+		}
+		defer grpcListener.Close()
+		grpcServer := sensorrpc.NewServer(db, modelID, policy, srv.TLSConfig.Clone(), log)
+		defer grpcServer.Stop()
+		shutdownGRPC = func(ctx context.Context) {
+			stopped := make(chan struct{})
+			go func() {
+				grpcServer.GracefulStop()
+				close(stopped)
+			}()
+			select {
+			case <-stopped:
+			case <-ctx.Done():
+				grpcServer.Stop()
+			}
+		}
+		go func() { grpcDone <- grpcServer.Serve(grpcListener) }()
+		log.Info("sensor_grpc_listening", "address", grpcAddress)
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -118,6 +151,9 @@ func run(log *slog.Logger) error {
 	case err = <-health:
 		_ = srv.Close()
 		return err
+	case err = <-grpcDone:
+		_ = srv.Close()
+		return err
 	case err = <-done:
 		if err == http.ErrServerClosed {
 			return nil
@@ -126,6 +162,7 @@ func run(log *slog.Logger) error {
 	case <-ctx.Done():
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		shutdownGRPC(shutdown)
 		if err = srv.Shutdown(shutdown); err != nil {
 			_ = srv.Close()
 			return err

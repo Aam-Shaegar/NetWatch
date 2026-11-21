@@ -5,8 +5,9 @@ help:
 	@echo "Build:      build test compose-check"
 	@echo "Services:   work work-status work-logs work-stop cli (local dev: db-up migrate api worker ml web)"
 	@echo "Capture:    lab-up lab-down lab-smoke live-smoke fixtures"
-	@echo "Models:     collect dataset train compare"
+	@echo "Models:     collect dataset train compare v1-data v1-train"
 	@echo "Checks:     test test-e2e test-acceptance collection-smoke server-smoke bench operations test-anomalies"
+	@echo "V1 ML:      test-find test-classify test-full"
 configure:
 	python3 scripts/configure.py
 bootstrap:
@@ -132,3 +133,37 @@ ACCEPTANCE_MANIFEST ?= data/holdout/detection/manifest.json
 ACCEPTANCE_REPORT ?= outputs/detection-acceptance.json
 test-acceptance:
 	python3 benchmarks/detection_acceptance.py "$(ACCEPTANCE_MANIFEST)" "$(E2E_ARTIFACT)" "$(ACCEPTANCE_REPORT)"
+
+.PHONY: v1-data v1-train test-find test-classify test-full test-pipeline
+V1_MANIFEST ?= data/holdout/v1/manifest.json
+V1_DATA ?= data/processed/v1/data.jsonl
+V1_TEST_DATA ?= $(V1_DATA)
+V1_PIPELINE_DATA ?= $(V1_TEST_DATA)
+V1_MODELS ?= artifacts/v1
+V1_REPORT_DIR ?= outputs/v1
+V1_SEED ?= 42
+V1_MAX_FPR ?= 0.02
+V1_MAX_UNKNOWN_ACCEPTANCE ?= 0.10
+V1_SENSOR ?= bin/netwatch-sensor
+V1_CATALOG ?= bin/netwatch-catalog
+V1_RUN = $(UV) run --project ml --locked python -m netwatch_ml.v1
+
+v1-data:
+	mkdir -p "$(dir $(V1_SENSOR))" "$(dir $(V1_CATALOG))"
+	go build -trimpath -buildvcs=false -o "$(V1_SENSOR)" ./cmd/netwatch-sensor
+	go build -trimpath -buildvcs=false -o "$(V1_CATALOG)" ./cmd/netwatch-catalog
+	$(V1_RUN) prepare "$(V1_MANIFEST)" "$(V1_DATA)" --sensor "$(V1_SENSOR)" --catalogue "$(V1_CATALOG)"
+
+v1-train:
+	$(V1_RUN) train "$(V1_DATA)" "$(V1_MODELS)" --seed "$(V1_SEED)" --max-fpr "$(V1_MAX_FPR)" --max-unknown-acceptance "$(V1_MAX_UNKNOWN_ACCEPTANCE)"
+
+test-find:
+	$(V1_RUN) evaluate find "$(V1_TEST_DATA)" "$(V1_MODELS)" "$(V1_REPORT_DIR)/find$(if $(MODEL),-$(MODEL)).json" $(if $(MODEL),--model "$(MODEL)")
+
+test-classify:
+	$(V1_RUN) evaluate classify "$(V1_TEST_DATA)" "$(V1_MODELS)" "$(V1_REPORT_DIR)/classify$(if $(MODEL),-$(MODEL)).json" $(if $(MODEL),--model "$(MODEL)")
+
+test-full: test-pipeline
+
+test-pipeline:
+	$(V1_RUN) evaluate pipeline "$(V1_PIPELINE_DATA)" "$(V1_MODELS)" "$(V1_REPORT_DIR)/pipeline$(if $(MODEL),-$(MODEL)).json" $(if $(MODEL),--model "$(MODEL)")

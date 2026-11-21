@@ -39,6 +39,9 @@ type Result struct {
 	Start, End                             int64
 	InPackets, OutPackets                  uint64
 	InBytes, OutBytes                      uint64
+	InUDPPackets, InUDPBytes               uint64
+	InICMPPackets, InICMPBytes             uint64
+	InTCPDestinationPortsPerSource         Count
 	Peers, DestinationPorts, ActiveFlows   Count
 	NewTCPAttempts                         uint64
 	EstablishedTCPAttempts, CompletedFlows uint64
@@ -79,6 +82,34 @@ func (d *distinct[T]) count() Count {
 	return Count{Value: len(d.values), Overflow: d.overflow}
 }
 
+type tcpProbe struct {
+	source netip.Addr
+	port   uint16
+}
+
+type probeFanout struct {
+	seen   distinct[tcpProbe]
+	counts map[netip.Addr]int
+	max    int
+}
+
+func (f *probeFanout) add(source netip.Addr, port uint16, limit int) {
+	previous := len(f.seen.values)
+	f.seen.add(tcpProbe{source, port}, limit)
+	if f.seen.overflow {
+		f.counts = nil
+		return
+	}
+	if previous == len(f.seen.values) {
+		return
+	}
+	if f.counts == nil {
+		f.counts = make(map[netip.Addr]int)
+	}
+	f.counts[source]++
+	f.max = max(f.max, f.counts[source])
+}
+
 type accumulator struct {
 	Result
 	peers            distinct[netip.Addr]
@@ -89,6 +120,7 @@ type accumulator struct {
 	tcp, syn, rst    uint64
 	gap              bool
 	connections      connectionAges
+	probes           probeFanout
 }
 
 type event struct {
@@ -153,6 +185,9 @@ func New(c Config) (*Engine, error) {
 	}
 	if !contract.IsTrafficFeatureSet(c.FeatureSet) {
 		return nil, fmt.Errorf("unsupported feature set %q", c.FeatureSet)
+	}
+	if c.FeatureSet == contract.TrafficV3 && !c.Host.IsValid() {
+		return nil, fmt.Errorf("traffic-v3 requires a protected host")
 	}
 	if (c.CoverageStart == nil) != (c.CoverageEnd == nil) {
 		return nil, fmt.Errorf("coverage needs both bounds")
@@ -243,12 +278,13 @@ func (e *Engine) drain(all bool) []Result {
 		w.MeanPacketSize, w.StdPacketSize = w.sizes.values()
 		w.MeanInterarrival, w.StdInterarrival = w.intervals.values()
 		w.connections.export(&w.Result)
+		w.InTCPDestinationPortsPerSource = Count{Value: w.probes.max, Overflow: w.probes.seen.overflow}
 		w.SYNFraction, w.RSTFraction = fraction(w.syn, w.tcp), fraction(w.rst, w.tcp)
 		w.Coverage = "partial"
 		if e.config.CoverageStart != nil && w.Start >= *e.config.CoverageStart && w.End <= *e.config.CoverageEnd {
 			w.Coverage = "complete"
 		}
-		if w.gap || w.connections.overflow || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
+		if w.gap || w.probes.seen.overflow || w.connections.overflow || w.Peers.Overflow || w.DestinationPorts.Overflow || w.ActiveFlows.Overflow || w.StateEvictions > 0 || w.LatePackets > 0 {
 			w.Coverage = "gap"
 		}
 		out = append(out, w.Result)
@@ -260,7 +296,8 @@ func (e *Engine) drain(all bool) []Result {
 func (e *Engine) accumulate(ev event) {
 	e.tracker.Advance(ev.at)
 	p := ev.p
-	if p.Status != "decoded" {
+	headerOnly := e.config.FeatureSet == contract.TrafficV3 && p.Status == "truncated" && p.HeaderComplete
+	if p.Status != "decoded" && !headerOnly {
 		if p.Status != "non_ip" {
 			e.bucket(ev.at).gap = true
 			e.InvalidateConnectionAges(ev.at + 1)
@@ -310,6 +347,20 @@ func (e *Engine) accumulate(ev event) {
 		w.InPackets++
 		w.InBytes += uint64(p.IPLength)
 		w.peers.add(src, e.config.MaxUnique)
+		if e.config.FeatureSet == contract.TrafficV3 {
+			switch p.Protocol {
+			case "TCP":
+				if p.TCPFlags != nil && *p.TCPFlags&0x16 == 2 && p.DstPort != nil {
+					w.probes.add(src, *p.DstPort, e.config.MaxUnique)
+				}
+			case "UDP":
+				w.InUDPPackets++
+				w.InUDPBytes += uint64(p.IPLength)
+			case "ICMP":
+				w.InICMPPackets++
+				w.InICMPBytes += uint64(p.IPLength)
+			}
+		}
 	}
 	if out {
 		w.OutPackets++

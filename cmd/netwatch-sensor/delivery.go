@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"netwatch.local/netwatch/internal/spool"
@@ -41,7 +42,7 @@ func (l *eventLog) Encode(fields map[string]any) error {
 }
 
 type deliveryOptions struct {
-	dir, endpoint                           *string
+	dir, endpoint, identity, ca             *string
 	maxBytes, segmentBytes, quarantineBytes *int64
 	timeout                                 *time.Duration
 	insecure                                *bool
@@ -51,11 +52,13 @@ func deliveryFlags(fs *flag.FlagSet) deliveryOptions {
 	defaults := spool.DefaultConfig()
 	return deliveryOptions{
 		dir:             fs.String("spool", "", "durable queue directory; required for delivery"),
-		endpoint:        fs.String("endpoint", "", "HTTP endpoint, normally /v1/windows; token from NETWATCH_SENSOR_TOKEN"),
+		endpoint:        fs.String("endpoint", "", "grpcs://host:port or legacy /v1/windows URL"),
+		identity:        fs.String("identity", "", "private enrolled sensor identity file"),
+		ca:              fs.String("ca-file", "", "optional TLS CA PEM file"),
 		maxBytes:        fs.Int64("spool-bytes", defaults.MaxBytes, "maximum segment bytes; drop newest on overflow"),
 		segmentBytes:    fs.Int64("segment-bytes", defaults.SegmentBytes, "maximum bytes per segment"),
 		quarantineBytes: fs.Int64("quarantine-bytes", defaults.QuarantineBytes, "maximum quarantine bytes"),
-		timeout:         fs.Duration("http-timeout", 10*time.Second, "per-request HTTP deadline"),
+		timeout:         fs.Duration("http-timeout", 10*time.Second, "per-request delivery deadline"),
 		insecure:        fs.Bool("allow-insecure-http", false, "allow remote HTTP only for an isolated laboratory"),
 	}
 }
@@ -66,7 +69,18 @@ func (o deliveryOptions) sender(q *spool.Queue, log *eventLog) (*transport.Sende
 	config := transport.DefaultConfig()
 	config.Endpoint = *o.endpoint
 	config.Token = os.Getenv("NETWATCH_SENSOR_TOKEN")
-	config.TrustedCAPEM = os.Getenv("NETWATCH_SENSOR_CA_PEM")
+	pem, err := trustedCA(*o.ca)
+	if err != nil {
+		return nil, err
+	}
+	config.TrustedCAPEM = pem
+	if strings.HasPrefix(config.Endpoint, "grpcs://") {
+		identity, err := o.registeredIdentity()
+		if err != nil {
+			return nil, err
+		}
+		config.Token = identity.Token
+	}
 	config.Timeout = *o.timeout
 	config.AllowInsecureHTTP = *o.insecure
 	sender, err := transport.New(q, config)
@@ -75,6 +89,20 @@ func (o deliveryOptions) sender(q *spool.Queue, log *eventLog) (*transport.Sende
 	}
 	sender.Log = func(event string, data any) { _ = log.Encode(map[string]any{"event": event, "data": data}) }
 	return sender, nil
+}
+
+func (o deliveryOptions) registeredIdentity() (sensorIdentity, error) {
+	if *o.identity == "" {
+		return sensorIdentity{}, fmt.Errorf("gRPC delivery requires --identity")
+	}
+	identity, err := readIdentity(*o.identity)
+	if err != nil {
+		return sensorIdentity{}, err
+	}
+	if identity.ID == "" || identity.Endpoint != *o.endpoint {
+		return sensorIdentity{}, fmt.Errorf("complete enrollment with this endpoint before delivery")
+	}
+	return identity, nil
 }
 
 type delivery struct {

@@ -61,6 +61,8 @@ func run(log *slog.Logger) error {
 		}
 	}
 	config.AllowInsecureHTTP = os.Getenv("NETWATCH_ALLOW_INSECURE_HTTP") == "true"
+	config.CatalogEndpoint = os.Getenv("NETWATCH_V1_ML_ENDPOINT")
+	config.DisabledRules = os.Getenv("NETWATCH_DISABLED_RULES")
 	config.SecurityEndpoint = os.Getenv("NETWATCH_SECURITY_ENDPOINT")
 	config.PrivateCompose = os.Getenv("NETWATCH_PRIVATE_COMPOSE") == "true"
 	runner, err := worker.New(db, config)
@@ -69,7 +71,7 @@ func run(log *slog.Logger) error {
 	}
 	runner.Log = func(event, detail string) {
 		switch event {
-		case "prediction_saved":
+		case "prediction_saved", "rule_incident_saved", "ml_incident_saved":
 			log.Info(event, "event_id", detail)
 		case "assessment_saved":
 			log.Info(event, "job_id", detail)
@@ -79,7 +81,12 @@ func run(log *slog.Logger) error {
 			log.Warn(event, "detail", detail)
 		}
 	}
-	health, err := telemetry.StartHealth(ctx, healthAddress, readiness(db, config.Endpoint, os.Getenv("NETWATCH_MODEL_ID"), os.Getenv("NETWATCH_POLICY_VERSION")))
+	check := readiness(db, config.Endpoint, os.Getenv("NETWATCH_MODEL_ID"), os.Getenv("NETWATCH_POLICY_VERSION"))
+	if config.CatalogEndpoint != "" {
+		// The catalog worker can process rules and keep the inference backlog independently of ML.
+		check = db.Ready
+	}
+	health, err := telemetry.StartHealth(ctx, healthAddress, check)
 	if err != nil {
 		return err
 	}

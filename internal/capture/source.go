@@ -80,7 +80,7 @@ func open(ctx context.Context, f *os.File, sensor string) (*Source, error) {
 		s.link = int(r.LinkType())
 		s.reader = r
 	}
-	if s.link != decode.Ethernet && s.link != decode.RawIP {
+	if !decode.SupportedLinkType(s.link) {
 		return nil, fmt.Errorf("unsupported link type %d", s.link)
 	}
 	return s, nil
@@ -118,7 +118,7 @@ func checkPCAP(ctx context.Context, f io.ReaderAt, size int64, magic [4]byte) er
 		return err
 	}
 	link := order.Uint32(h[20:])
-	if link != decode.Ethernet && link != decode.RawIP {
+	if !decode.SupportedLinkType(int(link)) {
 		return fmt.Errorf("unsupported link type %d", link)
 	}
 	for pos := int64(24); pos < size; {

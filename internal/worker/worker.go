@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"netwatch.local/netwatch/internal/assessment"
+	"netwatch.local/netwatch/internal/catalog"
 	"netwatch.local/netwatch/internal/contract"
 	"netwatch.local/netwatch/internal/store"
 )
@@ -32,9 +33,10 @@ type Response struct {
 	Predictions   []contract.Prediction `json:"predictions"`
 }
 type Config struct {
-	Endpoint, SecurityEndpoint        string
-	Lease, Timeout, Poll, GapWait     time.Duration
-	AllowInsecureHTTP, PrivateCompose bool
+	Endpoint, SecurityEndpoint, CatalogEndpoint string
+	DisabledRules                               string
+	Lease, Timeout, Poll, GapWait               time.Duration
+	AllowInsecureHTTP, PrivateCompose           bool
 }
 
 func DefaultConfig() Config {
@@ -47,6 +49,7 @@ type Worker struct {
 	client   *http.Client
 	security *assessment.Client
 	claims   uint64
+	rules    catalog.Rules
 	Log      func(string, string)
 }
 
@@ -68,9 +71,19 @@ func New(s *store.Store, c Config) (*Worker, error) {
 	if c.SecurityEndpoint != "" && !assessment.ValidEndpoint(c.SecurityEndpoint, "/v1/security/assess", c.PrivateCompose) {
 		return nil, fmt.Errorf("invalid assessment endpoint")
 	}
+	if c.CatalogEndpoint == "" {
+		c.CatalogEndpoint = "http://127.0.0.1:8000/v1/detect"
+	}
+	if !assessment.ValidEndpoint(c.CatalogEndpoint, "/v1/detect", c.PrivateCompose) {
+		return nil, fmt.Errorf("invalid catalog ML endpoint")
+	}
+	rules, err := catalog.NewRules(c.DisabledRules)
+	if err != nil {
+		return nil, err
+	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxResponseHeaderBytes = 64 << 10
-	return &Worker{Store: s, config: c, security: assessment.New(c.SecurityEndpoint, c.Timeout), client: &http.Client{Timeout: c.Timeout, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &Worker{Store: s, config: c, rules: rules, security: assessment.New(c.SecurityEndpoint, c.Timeout), client: &http.Client{Timeout: c.Timeout, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (w *Worker) Infer(ctx context.Context, j store.Job) (contract.Prediction, error) {
 	var window struct {
@@ -143,6 +156,12 @@ func (w *Worker) Once(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	w.claims++
+	var observed struct {
+		FeatureSet string `json:"feature_set_version"`
+	}
+	if json.Unmarshal(j.Window, &observed) == nil && observed.FeatureSet == catalog.FeatureSet {
+		return w.jobResult(j.EventID, w.processCatalog(ctx, *j))
+	}
 	p, inferErr := w.Infer(ctx, *j)
 	if ctx.Err() != nil {
 		return true, ctx.Err()
@@ -161,9 +180,13 @@ func (w *Worker) Once(ctx context.Context) (bool, error) {
 			w.Log("prediction_saved", j.EventID)
 		}
 	}
+	return w.jobResult(j.EventID, err)
+}
+
+func (w *Worker) jobResult(eventID string, err error) (bool, error) {
 	if errors.Is(err, store.ErrLeaseLost) {
 		if w.Log != nil {
-			w.Log("lease_lost", j.EventID)
+			w.Log("lease_lost", eventID)
 		}
 		return true, nil
 	}

@@ -19,6 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"netwatch.local/netwatch/internal/contract"
 	"netwatch.local/netwatch/internal/spool"
 )
@@ -54,10 +57,24 @@ type Sender struct {
 	queue  *spool.Queue
 	config Config
 	client *http.Client
+	grpc   *GRPCClient
 	Log    func(string, any)
 }
 
 func New(q *spool.Queue, c Config) (*Sender, error) {
+	if c.Timeout <= 0 || c.Interval <= 0 || c.Backoff <= 0 || c.MaxBackoff < c.Backoff || c.MaxBackoff > time.Hour || c.BatchSize < 1 || c.BatchSize > 100 {
+		return nil, fmt.Errorf("invalid sender limits")
+	}
+	if strings.HasPrefix(c.Endpoint, "grpcs://") {
+		if c.Token == "" || strings.ContainsAny(c.Token, " \r\n\t") {
+			return nil, fmt.Errorf("gRPC requires the enrolled sensor credential")
+		}
+		client, err := NewGRPCClient(c.Endpoint, c.TrustedCAPEM)
+		if err != nil {
+			return nil, err
+		}
+		return &Sender{queue: q, config: c, grpc: client}, nil
+	}
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, fmt.Errorf("endpoint must be an HTTP(S) URL without credentials, query or fragment")
@@ -74,9 +91,6 @@ func New(q *spool.Queue, c Config) (*Sender, error) {
 	}
 	if strings.ContainsAny(c.Token, "\r\n") {
 		return nil, fmt.Errorf("invalid token")
-	}
-	if c.Timeout <= 0 || c.Interval <= 0 || c.Backoff <= 0 || c.MaxBackoff < c.Backoff || c.MaxBackoff > time.Hour || c.BatchSize < 1 || c.BatchSize > 100 {
-		return nil, fmt.Errorf("invalid sender limits")
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxResponseHeaderBytes = 64 << 10
@@ -136,7 +150,12 @@ func sleep(ctx context.Context, d time.Duration) error {
 // Run keeps one immutable batch through retries. Cancellation leaves unacked data on disk.
 // once drains the current queue and exits; it still retries unavailable API responses.
 func (s *Sender) Run(ctx context.Context, once bool) error {
-	defer s.client.CloseIdleConnections()
+	if s.grpc != nil {
+		defer s.grpc.Close()
+	} else {
+		defer s.client.CloseIdleConnections()
+	}
+	var lastContact time.Time
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -146,6 +165,23 @@ func (s *Sender) Run(ctx context.Context, once bool) error {
 			return err
 		}
 		if len(items) == 0 {
+			if s.grpc != nil && (once || time.Since(lastContact) >= 2*time.Second) {
+				heartbeatContext, cancel := context.WithTimeout(ctx, s.config.Timeout)
+				loss := s.queue.Stats().Loss
+				_, contactErr := s.grpc.Contact(heartbeatContext, s.config.Token, &loss)
+				cancel()
+				lastContact = time.Now()
+				if contactErr != nil {
+					if !retryGRPC(contactErr) {
+						return fmt.Errorf("sensor contact rejected; queue retained")
+					}
+					s.log("delivery_retry", "sensor contact temporarily unavailable")
+					if err = sleep(ctx, 2*time.Second); err != nil {
+						return err
+					}
+					continue
+				}
+			}
 			if once {
 				return nil
 			}
@@ -168,9 +204,12 @@ func (s *Sender) Run(ctx context.Context, once bool) error {
 		if err != nil {
 			return err
 		}
-		body, err := json.Marshal(batch)
-		if err != nil {
-			return err
+		var body []byte
+		if s.grpc == nil {
+			body, err = json.Marshal(batch)
+			if err != nil {
+				return err
+			}
 		}
 		delay := s.config.Backoff
 		for {
@@ -209,6 +248,9 @@ func (s *Sender) Run(ctx context.Context, once bool) error {
 	}
 }
 func (s *Sender) post(ctx context.Context, b Batch, items []spool.Item, body []byte) (int, bool, error) {
+	if s.grpc != nil {
+		return s.postGRPC(ctx, b, items)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.config.Endpoint, bytes.NewReader(body))
 	if err != nil {
 		return -1, false, err
@@ -251,11 +293,49 @@ func (s *Sender) post(ctx context.Context, b Batch, items []spool.Item, body []b
 	if err = decode(data, &ack); err != nil || ack.BatchID != b.BatchID || len(ack.AcceptedEventIDs) != len(items) {
 		return -1, true, fmt.Errorf("invalid acknowledgment; batch retained")
 	}
+	return verifyAck(items, ack.AcceptedEventIDs)
+}
+
+func (s *Sender) postGRPC(ctx context.Context, b Batch, items []spool.Item) (int, bool, error) {
+	call, cancel := context.WithTimeout(ctx, s.config.Timeout)
+	defer cancel()
+	ack, err := s.grpc.submit(call, s.config.Token, b)
+	if err != nil {
+		return -1, retryGRPC(err), fmt.Errorf("gRPC delivery status %s; batch retained", status.Code(err))
+	}
+	if ack.GetSchemaVersion() != SensorProtocolVersion || ack.GetBatchId() != b.BatchID {
+		return -1, true, fmt.Errorf("invalid gRPC acknowledgment; batch retained")
+	}
+	if ack.InvalidWindowIndex != nil {
+		index := int(ack.GetInvalidWindowIndex())
+		if index >= len(items) || len(ack.GetAcceptedEventIds()) != 0 {
+			return -1, false, fmt.Errorf("invalid gRPC rejection; batch retained")
+		}
+		return index, false, nil
+	}
+	return verifyAck(items, ack.GetAcceptedEventIds())
+}
+
+func retryGRPC(err error) bool {
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return true
+	case codes.FailedPrecondition:
+		return status.Convert(err).Message() == "sensor paused"
+	default:
+		return false
+	}
+}
+
+func verifyAck(items []spool.Item, ids []string) (int, bool, error) {
+	if len(ids) != len(items) {
+		return -1, true, fmt.Errorf("incomplete acknowledgment")
+	}
 	expected := map[string]bool{}
 	for _, item := range items {
 		expected[item.EventID] = true
 	}
-	for _, id := range ack.AcceptedEventIDs {
+	for _, id := range ids {
 		if !expected[id] {
 			return -1, true, fmt.Errorf("incorrect acknowledged event IDs")
 		}

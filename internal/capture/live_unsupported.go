@@ -1,4 +1,4 @@
-//go:build !linux || !cgo
+//go:build (!linux && !darwin) || !cgo
 
 package capture
 
@@ -8,5 +8,5 @@ import (
 )
 
 func OpenLive(iface, filter, sensor string, bufferBytes int, record io.Writer) (*LiveSource, error) {
-	return nil, fmt.Errorf("live capture requires Linux with CGO and libpcap; use the sensor Docker image")
+	return nil, fmt.Errorf("live capture requires Linux or macOS with CGO and libpcap; use the sensor Docker image")
 }

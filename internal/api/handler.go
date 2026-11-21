@@ -22,12 +22,12 @@ import (
 )
 
 type Config struct {
-	Store                    *store.Store
-	Tokens                   map[string]string
-	Operators                map[string]string
-	WebDir, SecurityEndpoint string
-	ModelID, PolicyVersion   string
-	PrivateCompose           bool
+	Store                     *store.Store
+	Tokens                    map[string]string
+	Operators                 map[string]string
+	WebDir, SecurityEndpoint  string
+	ModelID, PolicyVersion    string
+	PrivateCompose, SensorRPC bool
 }
 
 // Handler retains a liveness-only startup profile when no database is configured.
@@ -39,8 +39,11 @@ func New(c Config) (http.Handler, error) {
 	if strings.ContainsRune(c.ModelID+c.PolicyVersion, 0) {
 		return nil, fmt.Errorf("invalid inference target")
 	}
-	if c.Store == nil || c.ModelID == "" || len(c.ModelID) > 200 || c.PolicyVersion == "" || len(c.PolicyVersion) > 200 || len(c.Tokens) == 0 {
+	if c.Store == nil || c.ModelID == "" || len(c.ModelID) > 200 || c.PolicyVersion == "" || len(c.PolicyVersion) > 200 || len(c.Tokens) == 0 && !c.SensorRPC {
 		return nil, fmt.Errorf("store, model, policy and sensor credentials are required")
+	}
+	if c.SensorRPC && len(c.Operators) == 0 {
+		return nil, fmt.Errorf("gRPC enrollment requires operator credentials")
 	}
 	tokens := map[[32]byte]string{}
 	for sensor, token := range c.Tokens {

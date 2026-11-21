@@ -16,7 +16,11 @@ func (e *Engine) Export(r Result, sensor, epoch string) (contract.Window, error)
 	if e.config.Service.IsValid() {
 		kind, entity = "destination_service", e.config.Protocol+"/"+e.config.Service.String()
 	}
-	identity, _ := json.Marshal([]string{sensor, epoch, kind, entity, strconv.FormatInt(r.Start, 10)})
+	parts := []string{sensor, epoch, kind, entity, strconv.FormatInt(r.Start, 10)}
+	if e.config.FeatureSet == contract.TrafficV3 {
+		parts = append(parts, contract.TrafficV3)
+	}
+	identity, _ := json.Marshal(parts)
 	w := contract.Window{
 		SchemaVersion: 1, FeatureSetVersion: e.config.FeatureSet,
 		EventID:  fmt.Sprintf("%x", sha256.Sum256(identity)),
@@ -36,12 +40,24 @@ func (e *Engine) Export(r Result, sensor, epoch string) (contract.Window, error)
 		w.Features["tcp_closed_duration_max_seconds"] = r.TCPClosedMax
 		w.Features["tcp_age_known_start_fraction"] = r.TCPKnownStartFraction
 	}
-	for name, n := range map[string]uint64{
+	counts := map[string]uint64{
 		"in_packets": r.InPackets, "out_packets": r.OutPackets,
 		"in_ip_bytes": r.InBytes, "out_ip_bytes": r.OutBytes,
 		"new_tcp_attempts": r.NewTCPAttempts, "established_tcp_attempts": r.EstablishedTCPAttempts,
 		"completed_flow_count": r.CompletedFlows,
-	} {
+	}
+	if e.config.FeatureSet == contract.TrafficV3 {
+		counts["in_udp_packets"] = r.InUDPPackets
+		counts["in_udp_ip_bytes"] = r.InUDPBytes
+		counts["in_icmp_packets"] = r.InICMPPackets
+		counts["in_icmp_ip_bytes"] = r.InICMPBytes
+		w.Features["in_tcp_distinct_ports_per_source_max"] = nil
+		if !r.InTCPDestinationPortsPerSource.Overflow {
+			v := float64(r.InTCPDestinationPortsPerSource.Value)
+			w.Features["in_tcp_distinct_ports_per_source_max"] = &v
+		}
+	}
+	for name, n := range counts {
 		if n > 1<<53 {
 			return w, fmt.Errorf("%s exceeds exact JSON feature range", name)
 		}

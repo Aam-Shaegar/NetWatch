@@ -19,7 +19,7 @@ services:
   db:
     image: postgres:17.7-alpine
     environment:
-      POSTGRES_DB: netwatch
+      POSTGRES_DB: ${NETWATCH_DB_NAME:-netwatch}
       POSTGRES_USER: ${NETWATCH_DB_USER:-netwatch}
       POSTGRES_PASSWORD: ${NETWATCH_DB_PASSWORD:?Set the PostgreSQL bootstrap password}
     volumes:
@@ -54,13 +54,14 @@ services:
     environment:
       <<: *db-env
       NETWATCH_LISTEN: 0.0.0.0:8443
+      NETWATCH_GRPC_LISTEN: 0.0.0.0:8444
       NETWATCH_API_HEALTH_ADDRESS: 127.0.0.1:8091
       NETWATCH_PRIVATE_COMPOSE: "true"
       NETWATCH_SECURITY_ENDPOINT: http://ml:8000/v1/security/assess
       NETWATCH_WEB_DIR: /srv/netwatch/web
       NETWATCH_TLS_CERT: /run/netwatch/tls/cert.pem
       NETWATCH_TLS_KEY: /run/netwatch/tls/key.pem
-      NETWATCH_SENSOR_TOKENS: ${NETWATCH_SENSOR_TOKENS:?Set a JSON map of sensor IDs to tokens}
+      NETWATCH_SENSOR_TOKENS: ${NETWATCH_SENSOR_TOKENS:-}
       NETWATCH_OPERATOR_TOKENS: ${NETWATCH_OPERATOR_TOKENS:?Set a JSON map of operator IDs to tokens}
       NETWATCH_MODEL_ID: ${NETWATCH_MODEL_ID:?Set the approved model identifier}
       NETWATCH_POLICY_VERSION: ${NETWATCH_POLICY_VERSION:-v1}
@@ -73,6 +74,7 @@ services:
         bind: {create_host_path: false}
     ports:
       - "${NETWATCH_API_HOST:-127.0.0.1}:${NETWATCH_API_PORT:-8443}:8443"
+      - "${NETWATCH_GRPC_HOST:-127.0.0.1}:${NETWATCH_GRPC_PORT:-8444}:8444"
     healthcheck:
       test: ["CMD", "/usr/local/bin/netwatch-api", "-check-ready"]
       interval: 2s
@@ -87,13 +89,14 @@ services:
     depends_on:
       migrate: {condition: service_completed_successfully}
       db: {condition: service_healthy}
-      ml: {condition: service_healthy}
     environment:
       <<: *db-env
       NETWATCH_WORKER_HEALTH_ADDRESS: 127.0.0.1:8090
       NETWATCH_INCIDENT_GAP_WAIT: ${NETWATCH_INCIDENT_GAP_WAIT:-2m}
       NETWATCH_PRIVATE_COMPOSE: "true"
       NETWATCH_ML_ENDPOINT: http://ml:8000/v1/predict
+      NETWATCH_V1_ML_ENDPOINT: http://ml:8000/v1/detect
+      NETWATCH_DISABLED_RULES: ${NETWATCH_DISABLED_RULES:-}
       NETWATCH_SECURITY_ENDPOINT: http://ml:8000/v1/security/assess
       NETWATCH_MODEL_ID: ${NETWATCH_MODEL_ID:?Set the approved model identifier}
       NETWATCH_LOG_LEVEL: ${NETWATCH_LOG_LEVEL:-info}
@@ -113,11 +116,13 @@ services:
       dockerfile: deploy/ml/Dockerfile
     environment:
       NETWATCH_MODEL_ID: ${NETWATCH_MODEL_ID:?Set the approved model identifier}
-      NETWATCH_MODEL_BUNDLE: /model/bundle.json
-      NETWATCH_MODEL_SHA256: ${NETWATCH_MODEL_SHA256:?Set the approved bundle SHA-256}
+      NETWATCH_MODEL_BUNDLE: ${NETWATCH_MODEL_SHA256:+${NETWATCH_LEGACY_MODEL_BUNDLE:-/model/bundle.json}}
+      NETWATCH_MODEL_SHA256: ${NETWATCH_MODEL_SHA256:-}
+      NETWATCH_V1_MODEL_BUNDLE: ${NETWATCH_V1_MODEL_BUNDLE:-}
+      NETWATCH_V1_MODEL_SHA256: ${NETWATCH_V1_MODEL_SHA256:-}
       NETWATCH_FEATURE_SET_VERSION: ${NETWATCH_CAPTURE_FEATURE_SET:-traffic-v1}
       NETWATCH_POLICY_VERSION: ${NETWATCH_POLICY_VERSION:-v1}
-      NETWATCH_SERVICE_MODEL_ENTITIES: ${NETWATCH_SERVICE_MODEL_ENTITIES:?Set the approved service identifiers}
+      NETWATCH_SERVICE_MODEL_ENTITIES: ${NETWATCH_SERVICE_MODEL_ENTITIES:-}
       NETWATCH_LOG_LEVEL: ${NETWATCH_LOG_LEVEL:-info}
     volumes:
       - type: bind

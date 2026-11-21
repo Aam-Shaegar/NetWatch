@@ -91,6 +91,7 @@ def run(artifact, output, exercise=None, entities="TCP/192.0.2.10:8080", policy=
             NETWATCH_OPERATOR_TOKENS=json.dumps({"tester": operator}),
             NETWATCH_API_HOST="127.0.0.1",
             NETWATCH_API_PORT=str(port),
+            NETWATCH_GRPC_PORT="0",
             NETWATCH_POLICY_VERSION=policy,
             NETWATCH_CAPTURE_FEATURE_SET=version,
             NETWATCH_SERVICE_MODEL_ENTITIES=entities + "," + binding["entity_id"],

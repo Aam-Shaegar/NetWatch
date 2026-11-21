@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package netwatch.sensor.v1;
+option go_package = "netwatch.local/netwatch/contracts/sensorv1";
+
+service SensorService {
+  rpc Enroll(EnrollRequest) returns (ContactResponse);
+  rpc Contact(ContactRequest) returns (ContactResponse);
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+}
+
+message EnrollRequest {
+  uint32 schema_version = 1;
+  string registration_code = 2;
+  // The client generates and persists this random credential before enrollment.
+  string credential = 3;
+}
+
+message ContactRequest {
+  uint32 schema_version = 1;
+  QueueLoss queue_loss = 2;
+}
+
+message ContactResponse {
+  uint32 schema_version = 1;
+  string sensor_id = 2;
+  string state = 3;
+}
+
+message SubmitRequest {
+  uint32 schema_version = 1;
+  string batch_id = 2;
+  repeated Observation observations = 3;
+  QueueLoss queue_loss = 4;
+}
+
+message SubmitResponse {
+  uint32 schema_version = 1;
+  string batch_id = 2;
+  repeated string accepted_event_ids = 3;
+  // Present only for an invalid observation; no observations were committed.
+  optional uint32 invalid_window_index = 4;
+}
+
+message Observation {
+  uint32 schema_version = 1;
+  string feature_set_version = 2;
+  string event_id = 3;
+  string sensor_id = 4;
+  string capture_epoch = 5;
+  string entity_type = 6;
+  string entity_id = 7;
+  int64 window_start_ns = 8;
+  int64 window_end_ns = 9;
+  map<string, FeatureValue> features = 10;
+  Quality quality = 11;
+}
+
+message FeatureValue {
+  optional double value = 1;
+}
+
+message Quality {
+  string coverage = 1;
+  optional int64 capture_dropped = 2;
+  int64 late_packets = 3;
+  int64 state_evictions = 4;
+}
+
+message QueueLoss {
+  uint64 count = 1;
+  string first_event_id = 2;
+  string last_event_id = 3;
+  string first_window_start_ns = 4;
+  string last_window_start_ns = 5;
+}

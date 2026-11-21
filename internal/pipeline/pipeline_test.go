@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -507,46 +509,28 @@ func TestCrashWorkerHelper(t *testing.T) {
 func TestMigrationRollbackAndReadiness(t *testing.T) {
 	db, _ := database(t)
 	ctx := context.Background()
-	down, err := migrations.Files.ReadFile("000001_pipeline.down.sql")
-	if err != nil {
-		t.Fatal(err)
+	down, err := fs.Glob(migrations.Files, "*.down.sql")
+	if err != nil || len(down) == 0 {
+		t.Fatal("no rollback migrations", err)
 	}
+	slices.Reverse(down)
 	tx, err := db.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	down4, err := migrations.Files.ReadFile("000004_assessment_jobs.down.sql")
-	if err != nil {
+	defer tx.Rollback(ctx)
+	for _, name := range down {
+		sql, err := migrations.Files.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, string(sql)); err != nil {
+			t.Fatal(name, err)
+		}
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM schema_migrations`); err != nil {
 		t.Fatal(err)
 	}
-	down5, err := migrations.Files.ReadFile("000005_incident_interruption.down.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, string(down5)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, string(down4)); err != nil {
-		t.Fatal(err)
-	}
-	down3, err := migrations.Files.ReadFile("000003_security.down.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, string(down3)); err != nil {
-		t.Fatal(err)
-	}
-	down2, err := migrations.Files.ReadFile("000002_incidents.down.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, string(down2)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = tx.Exec(ctx, string(down)); err != nil {
-		t.Fatal(err)
-	}
-	tx.Exec(ctx, `DELETE FROM schema_migrations WHERE version IN (1,2,3,4,5)`)
 	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -555,6 +539,9 @@ func TestMigrationRollbackAndReadiness(t *testing.T) {
 	}
 	if err = db.Migrate(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if err := db.Ready(ctx); err != nil {
+		t.Fatal("reapplied migrations did not restore readiness", err)
 	}
 	db.Pool.Exec(ctx, `UPDATE schema_migrations SET checksum='changed'`)
 	if err = db.Migrate(ctx); err == nil {

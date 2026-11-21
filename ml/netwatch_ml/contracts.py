@@ -30,7 +30,7 @@ def validate(kind: str, value: dict):
         if int(value["window_end_ns"]) <= int(value["window_start_ns"]):
             raise ValueError("window end must exceed start")
         for key, number in value["features"].items():
-            if number is not None and (key.endswith(("packets", "bytes", "flows", "attempts")) or key.startswith("unique_") or key=="completed_flow_count"):
+            if number is not None and (key.endswith(("packets", "bytes", "flows", "attempts")) or key.startswith("unique_") or key in {"completed_flow_count", "in_tcp_distinct_ports_per_source_max"}):
                 if isinstance(number,bool) or not isinstance(number,int) or number>2**63-1:
                     raise ValueError("count must be int64")
     if kind == "prediction":

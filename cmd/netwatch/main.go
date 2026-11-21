@@ -1,7 +1,8 @@
-// Command netwatch provides a read-only operator interface to a running server.
+// Command netwatch provides the NetWatch operator interface.
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -73,11 +74,30 @@ func newClient(o options) (*operatorClient, error) {
 }
 
 func (c *operatorClient) get(ctx context.Context, path string, query url.Values, result any) error {
+	return c.request(ctx, http.MethodGet, path, query, nil, result)
+}
+
+func (c *operatorClient) post(ctx context.Context, path string, payload, result any) error {
+	return c.request(ctx, http.MethodPost, path, nil, payload, result)
+}
+
+func (c *operatorClient) request(ctx context.Context, method, path string, query url.Values, payload, result any) error {
 	endpoint := *c.endpoint
 	endpoint.Path, endpoint.RawQuery = path, query.Encode()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	var body io.Reader
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), body)
 	if err != nil {
 		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if strings.HasPrefix(path, "/v1/") {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -87,7 +107,7 @@ func (c *operatorClient) get(ctx context.Context, path string, query url.Values,
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("%s returned HTTP %d", path, resp.StatusCode)
 	}
 	const maxResponse = 2 << 20
@@ -95,24 +115,26 @@ func (c *operatorClient) get(ctx context.Context, path string, query url.Values,
 	if err != nil || len(data) > maxResponse {
 		return errors.New("could not read a bounded server response")
 	}
+	if result == nil {
+		return nil
+	}
 	if err := json.Unmarshal(data, result); err != nil {
 		return fmt.Errorf("invalid response from %s: %w", path, err)
 	}
 	return nil
 }
 
-func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
-	usage := func() { fmt.Fprintln(stderr, "Usage: netwatch {status|doctor|incidents} [options]") }
-	if len(args) == 0 {
-		usage()
-		return 1, nil
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	usage := func() { fmt.Fprintln(stderr, "Usage: netwatch [menu|status|doctor|incidents] [options]") }
+	action := "menu"
+	if len(args) > 0 {
+		action, args = args[0], args[1:]
 	}
-	action := args[0]
 	switch action {
 	case "-h", "--help", "help":
 		usage()
 		return 0, nil
-	case "status", "doctor", "incidents":
+	case "menu", "status", "doctor", "incidents":
 	default:
 		usage()
 		return 1, fmt.Errorf("unknown command %q", action)
@@ -140,7 +162,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 		fs.StringVar(&model, "model", "", "filter by exact model ID")
 		fs.Int64Var(&before, "before", 0, "cursor from the previous page")
 	}
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
 		}
@@ -148,6 +170,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 	}
 	if fs.NArg() != 0 || (action == "doctor" && maxAge <= 0) || (action == "incidents" && (since <= 0 || before < 0)) {
 		return 1, errors.New("invalid options")
+	}
+	if action == "menu" {
+		return 0, runMenu(ctx, o, stdin, stdout, stderr)
 	}
 	client, err := newClient(o)
 	if err != nil {
@@ -176,7 +201,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, err
 }
 
 func main() {
-	code, err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr)
+	code, err := run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "netwatch:", err)
 		code = 1

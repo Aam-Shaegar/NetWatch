@@ -61,7 +61,7 @@ func (s *LiveSource) Next(ctx context.Context) (decode.Meta, error) {
 }
 
 func newLive(backend liveBackend, link int, sensor, iface string, record io.Writer) (*LiveSource, error) {
-	if link != decode.Ethernet && link != decode.RawIP {
+	if !decode.SupportedLinkType(link) {
 		return nil, errors.New("unsupported live link type")
 	}
 	s := &LiveSource{backend: backend, link: link, sensor: sensor, iface: iface}

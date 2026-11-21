@@ -80,7 +80,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql", "000003_security.up.sql", "000004_assessment_jobs.up.sql", "000005_incident_interruption.up.sql", "000006_pipeline_status.up.sql"}
+var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql", "000003_security.up.sql", "000004_assessment_jobs.up.sql", "000005_incident_interruption.up.sql", "000006_pipeline_status.up.sql", "000007_sensors.up.sql", "000008_catalog.up.sql"}
 
 func (s *Store) Ready(ctx context.Context) error {
 	for i, file := range migrationFiles {
@@ -95,7 +95,7 @@ func (s *Store) Ready(ctx context.Context) error {
 		}
 	}
 	var ok bool
-	err := s.Pool.QueryRow(ctx, `SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['feature_windows','inference_jobs','ingestion_batches','predictions','incidents','incident_queue','incident_events','incident_streams','security_observations','assessment_jobs']) name`).Scan(&ok)
+	err := s.Pool.QueryRow(ctx, `SELECT bool_and(to_regclass(name) IS NOT NULL) FROM unnest(ARRAY['feature_windows','inference_jobs','ingestion_batches','predictions','incidents','incident_queue','incident_events','incident_streams','security_observations','assessment_jobs','feature_windows_recent_receipt','registered_sensors','sensor_registrations','catalog_incidents','catalog_decisions','catalog_policy_settings']) name`).Scan(&ok)
 	if err != nil || !ok {
 		return fmt.Errorf("database schema not ready")
 	}
@@ -104,6 +104,14 @@ func (s *Store) Ready(ctx context.Context) error {
 
 // Ingest commits receipt, new windows and their jobs together; duplicates do not reschedule.
 func (s *Store) Ingest(ctx context.Context, b transport.Batch, sensor, model, policy string) error {
+	return s.ingest(ctx, b, sensor, model, policy, false)
+}
+
+func (s *Store) IngestRegistered(ctx context.Context, b transport.Batch, sensor, model, policy string) error {
+	return s.ingest(ctx, b, sensor, model, policy, true)
+}
+
+func (s *Store) ingest(ctx context.Context, b transport.Batch, sensor, model, policy string, registered bool) error {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -111,6 +119,19 @@ func (s *Store) Ingest(ctx context.Context, b transport.Batch, sensor, model, po
 	defer tx.Rollback(context.Background())
 	if _, err = tx.Exec(ctx, `SET LOCAL synchronous_commit=on`); err != nil {
 		return err
+	}
+	if registered {
+		var state string
+		err = tx.QueryRow(ctx, `SELECT state FROM registered_sensors WHERE id=$1 FOR SHARE`, sensor).Scan(&state)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && state == "revoked") {
+			return ErrSensorUnknown
+		}
+		if err != nil {
+			return err
+		}
+		if state != "active" {
+			return ErrSensorState
+		}
 	}
 	ids := make([]string, 0, len(b.Windows))
 	windows := make(map[string]json.RawMessage, len(b.Windows))

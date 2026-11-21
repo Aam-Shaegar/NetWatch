@@ -3,10 +3,11 @@ package contract
 const (
 	TrafficV1 = "traffic-v1"
 	TrafficV2 = "traffic-v2"
+	TrafficV3 = "traffic-v3"
 )
 
 func IsTrafficFeatureSet(version string) bool {
-	return version == TrafficV1 || version == TrafficV2
+	return version == TrafficV1 || version == TrafficV2 || version == TrafficV3
 }
 
 // Window mirrors the versioned wire contract. Validate raw JSON before decoding.

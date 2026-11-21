@@ -53,3 +53,28 @@ censoring. A capture started mid-connection, a bounded state eviction, a
 capture gap, or a new epoch can make an opening time unavailable. The window
 still carries its quality flags, and incomplete observations cannot yield a
 scored prediction. Durations measure the transport connection.
+
+## traffic-v3 host detection
+
+The v1 detector uses a protected-host window with the original sixteen features
+and five required measurements:
+
+- `in_tcp_distinct_ports_per_source_max` is the largest number of distinct
+  destination ports in opening TCP SYN observations from one source to the
+  protected host in this window. Retransmissions and repeat ports add no
+  distinct entries. One bounded set covers all source/port pairs. Overflow
+  yields null for this feature and gap coverage.
+- `in_udp_packets` and `in_udp_ip_bytes` count inbound UDP packets and IP bytes.
+- `in_icmp_packets` and `in_icmp_ip_bytes` count inbound ICMP and ICMPv6 together.
+
+A snaplen-truncated packet contributes only when the decoder verified all
+required headers. Unusable frames still mark the window as a gap. A fully
+covered empty window has zero counters. Unknown capture drops remain null;
+for offline replay supply `--capture-dropped 0` only with evidence of zero
+loss for the declared coverage interval.
+
+The feature-set version is part of the event ID for traffic-v3, so replaying the
+same observation under traffic-v1 and traffic-v3 yields distinct IDs. Legacy
+traffic-v1/v2 IDs are preserved. The TLS gRPC sensor ingestion method accepts
+traffic-v3 and transmits this schema as typed Protobuf fields, including explicit
+presence for nullable feature values.

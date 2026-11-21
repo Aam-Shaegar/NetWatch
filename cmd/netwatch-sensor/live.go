@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"netwatch.local/netwatch/internal/capture"
+	"netwatch.local/netwatch/internal/contract"
 	"netwatch.local/netwatch/internal/window"
 )
 
@@ -42,7 +44,11 @@ func interfaces() error {
 	return json.NewEncoder(os.Stdout).Encode(out)
 }
 
-func live(ctx context.Context, args []string, logs *eventLog) (returnErr error) {
+func live(ctx context.Context, args []string, logs *eventLog) error {
+	return runLive(ctx, args, logs, true)
+}
+
+func runLive(ctx context.Context, args []string, logs *eventLog, supervise bool) (returnErr error) {
 	fs := flag.NewFlagSet("live", flag.ContinueOnError)
 	iface := fs.String("interface", "", "named capture interface")
 	filter := fs.String("filter", "", "required BPF filter")
@@ -68,6 +74,23 @@ func live(ctx context.Context, args []string, logs *eventLog) (returnErr error) 
 	if *options.start != "" || *options.end != "" {
 		return fmt.Errorf("live measures its own coverage bounds")
 	}
+	registered := strings.HasPrefix(*deliveryOptions.endpoint, "grpcs://")
+	var identity sensorIdentity
+	if registered {
+		var err error
+		identity, err = deliveryOptions.registeredIdentity()
+		if err != nil {
+			return err
+		}
+		if *sensor != "live" && *sensor != identity.ID {
+			return fmt.Errorf("--sensor must match the enrolled identity")
+		}
+		*sensor = identity.ID
+		*options.featureSet = contract.TrafficV3
+		if supervise && *options.epoch != "" {
+			return fmt.Errorf("enrolled live capture creates a fresh epoch on each restart")
+		}
+	}
 	if *options.epoch == "" {
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
@@ -81,6 +104,14 @@ func live(ctx context.Context, args []string, logs *eventLog) (returnErr error) 
 	}
 	if *deliveryOptions.dir != "" && engine == nil {
 		return fmt.Errorf("spooling requires --host or --service windows")
+	}
+	if supervise && registered {
+		if *output != "" || *record != "" {
+			return fmt.Errorf("managed live capture requires a spool without fixed output files")
+		}
+		return superviseCapture(ctx, deliveryOptions, identity, func(ctx context.Context) error {
+			return runLive(ctx, args, logs, false)
+		}, logs)
 	}
 	ctx, delivery, err := startDelivery(ctx, deliveryOptions, logs)
 	if err != nil {

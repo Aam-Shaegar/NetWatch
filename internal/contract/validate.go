@@ -110,9 +110,9 @@ func validateFields(kind string, obj map[string]any) error {
 		}
 	}
 	if kind == "window" {
-		start, _ := strconv.ParseInt(obj["window_start_ns"].(string), 10, 64)
-		end, _ := strconv.ParseInt(obj["window_end_ns"].(string), 10, 64)
-		if end <= start {
+		start, startErr := strconv.ParseInt(obj["window_start_ns"].(string), 10, 64)
+		end, endErr := strconv.ParseInt(obj["window_end_ns"].(string), 10, 64)
+		if startErr != nil || endErr != nil || end <= start {
 			return fmt.Errorf("window end must exceed start")
 		}
 		for name, v := range obj["features"].(map[string]any) {

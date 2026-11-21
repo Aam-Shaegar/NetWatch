@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"net/netip"
@@ -23,7 +22,7 @@ func windowFlags(fs *flag.FlagSet) windowOptions {
 		host:       fs.String("host", "", "aggregate windows for this host"),
 		service:    fs.String("service", "", "aggregate windows for IP:port"),
 		protocol:   fs.String("protocol", "TCP", "service protocol"),
-		featureSet: fs.String("feature-set", "traffic-v1", "window feature set: traffic-v1 or traffic-v2"),
+		featureSet: fs.String("feature-set", "traffic-v1", "window feature set: traffic-v1, traffic-v2, or host-only traffic-v3"),
 		epoch:      fs.String("epoch", "", "required window observation epoch"),
 		start:      fs.String("coverage-start", "", "declared continuous capture start, ns"),
 		end:        fs.String("coverage-end", "", "declared continuous capture end, ns (exclusive)"),
@@ -68,17 +67,4 @@ func (o windowOptions) engine() (*window.Engine, error) {
 		}
 	}
 	return window.New(c)
-}
-
-func writeWindows(enc *json.Encoder, engine *window.Engine, results []window.Result, sensor, epoch string) error {
-	for _, r := range results {
-		w, err := engine.Export(r, sensor, epoch)
-		if err != nil {
-			return err
-		}
-		if err = enc.Encode(w); err != nil {
-			return err
-		}
-	}
-	return nil
 }

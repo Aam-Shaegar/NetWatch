@@ -8,9 +8,15 @@ import (
 )
 
 const (
-	Ethernet = 1
-	RawIP    = 101
+	NullLoopback = 0
+	Ethernet     = 1
+	RawIP        = 101
+	BSDLoopback  = 108
 )
+
+func SupportedLinkType(link int) bool {
+	return link == Ethernet || link == RawIP || link == NullLoopback || link == BSDLoopback
+}
 
 // Meta follows contracts/packet.schema.json. Null ports mean not observed.
 type Meta struct {
@@ -63,6 +69,28 @@ func Packet(frame []byte, link int, ns int64, sensor, iface string, wire int) (m
 			return m
 		}
 		if len(frame) == 0 || (typ == 0x0800 && frame[0]>>4 != 4) || (typ == 0x86dd && frame[0]>>4 != 6) {
+			return m
+		}
+	case NullLoopback, BSDLoopback:
+		if len(frame) < 5 {
+			return m
+		}
+		family := binary.BigEndian.Uint32(frame[:4])
+		if link == NullLoopback && family > 0xffff {
+			family = binary.LittleEndian.Uint32(frame[:4])
+		}
+		frame = frame[4:]
+		switch family {
+		case 2:
+			if frame[0]>>4 != 4 {
+				return m
+			}
+		case 10, 24, 28, 30:
+			if frame[0]>>4 != 6 {
+				return m
+			}
+		default:
+			m.Status = "non_ip"
 			return m
 		}
 	case RawIP:

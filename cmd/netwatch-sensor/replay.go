@@ -21,6 +21,7 @@ func replay(ctx context.Context, args []string) error {
 	out := fs.String("output", "", "new metadata JSONL path")
 	options := windowFlags(fs)
 	id := fs.String("sensor", "offline", "observation source")
+	dropCount := fs.Int64("capture-dropped", -1, "recorded capture loss over the selected interval; omitted when unknown")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -30,6 +31,9 @@ func replay(ctx context.Context, args []string) error {
 	engine, err := options.engine()
 	if err != nil {
 		return err
+	}
+	if *dropCount < -1 || (*dropCount >= 0 && (engine == nil || *options.start == "")) {
+		return fmt.Errorf("declared capture losses require window coverage bounds and a nonnegative count")
 	}
 	src, err := capture.Open(ctx, *in, *id)
 	if err != nil {
@@ -60,7 +64,17 @@ func replay(ctx context.Context, args []string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return writeWindows(enc, engine, []window.Result{r}, *id, *options.epoch)
+		if *dropCount >= 0 && r.Coverage == "complete" && *dropCount > 0 {
+			r.Coverage = "gap"
+		}
+		w, err := engine.Export(r, *id, *options.epoch)
+		if err != nil {
+			return err
+		}
+		if *dropCount >= 0 {
+			w.Quality.CaptureDropped = dropCount
+		}
+		return enc.Encode(w)
 	}
 	counts := map[string]int{}
 	total := 0

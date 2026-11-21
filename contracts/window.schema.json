@@ -23,7 +23,8 @@
     "feature_set_version": {
       "enum": [
         "traffic-v1",
-        "traffic-v2"
+        "traffic-v2",
+        "traffic-v3"
       ]
     },
     "event_id": {
@@ -231,6 +232,46 @@
           ],
           "minimum": 0,
           "maximum": 1
+        },
+        "in_tcp_distinct_ports_per_source_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740992
+        },
+        "in_udp_packets": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740992
+        },
+        "in_udp_ip_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740992
+        },
+        "in_icmp_packets": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740992
+        },
+        "in_icmp_ip_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740992
         }
       }
     },
@@ -285,6 +326,22 @@
       "if": {
         "properties": {
           "feature_set_version": {
+            "const": "traffic-v1"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "features": {
+            "maxProperties": 16
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "feature_set_version": {
             "const": "traffic-v2"
           }
         }
@@ -292,14 +349,34 @@
       "then": {
         "properties": {
           "features": {
-            "$ref": "#/$defs/tcpConnectionAges"
+            "$ref": "#/$defs/tcpConnectionAges",
+            "maxProperties": 21
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "feature_set_version": {
+            "const": "traffic-v3"
           }
         }
       },
-      "else": {
+      "then": {
         "properties": {
+          "entity_type": {
+            "const": "host"
+          },
           "features": {
-            "maxProperties": 16
+            "required": [
+              "in_tcp_distinct_ports_per_source_max",
+              "in_udp_packets",
+              "in_udp_ip_bytes",
+              "in_icmp_packets",
+              "in_icmp_ip_bytes"
+            ],
+            "maxProperties": 21
           }
         }
       }
