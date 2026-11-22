@@ -1,0 +1,40 @@
+{
+  "classify": {
+    "file": "classify_random_forest.pkl",
+    "sha256": "a6703cb59077e9dbd2a8918eff582b90b12ddcd9ca597e3e90b7a531b29c77fa"
+  },
+  "columns": [
+    "in_packets",
+    "out_packets",
+    "in_ip_bytes",
+    "out_ip_bytes",
+    "unique_peers",
+    "unique_destination_ports",
+    "active_flows",
+    "new_tcp_attempts",
+    "established_tcp_attempts",
+    "completed_flow_count",
+    "syn_fraction",
+    "rst_fraction",
+    "mean_packet_size",
+    "std_packet_size",
+    "mean_interarrival_seconds",
+    "std_interarrival_seconds",
+    "in_tcp_distinct_ports_per_source_max",
+    "in_udp_packets",
+    "in_udp_ip_bytes",
+    "in_icmp_packets",
+    "in_icmp_ip_bytes"
+  ],
+  "dependencies": {
+    "numpy": "2.5.4",
+    "scikit_learn": "1.9.1"
+  },
+  "feature_set": "traffic-v3",
+  "find": {
+    "file": "find_random_forest.pkl",
+    "sha256": "38b908d2947f31a99219d369589dd99bd2d03755660855f91de9c8f939f1afd1"
+  },
+  "model_id": "v1-cea7a667ef3c04f3656f1c43",
+  "schema_version": 1
+}

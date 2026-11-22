@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 
@@ -69,6 +70,87 @@ func (s *Store) CatalogGatePassed(ctx context.Context, j Job) (bool, error) {
  WHERE event_id=$1 AND model_id=$2 AND policy_version=$3 AND status='no_match')`,
 		j.EventID, j.ModelID, j.PolicyVersion).Scan(&passed)
 	return passed, err
+}
+
+// CatalogTemporalHistory freezes the causal input of a pending ML decision. Ingress may
+// deliver older windows during an outage; a retry must use the same sample as the first call.
+func (s *Store) CatalogTemporalHistory(ctx context.Context, j Job, w contract.Window) (json.RawMessage, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(context.Background())
+	var snapshot json.RawMessage
+	err = tx.QueryRow(ctx, `SELECT d.payload->'history' FROM inference_jobs j
+ JOIN catalog_decisions d USING(event_id,model_id,policy_version)
+ WHERE j.event_id=$1 AND j.model_id=$2 AND j.policy_version=$3 AND d.status='no_match'
+ AND j.status='leased' AND j.lease_token=$4 AND j.lease_until>clock_timestamp() FOR UPDATE OF j`,
+		j.EventID, j.ModelID, j.PolicyVersion, j.Token).Scan(&snapshot)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrLeaseLost
+	}
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		snapshot, err = temporalPredecessors(ctx, tx, w)
+		if err != nil {
+			return nil, err
+		}
+		_, err = tx.Exec(ctx, `UPDATE catalog_decisions SET payload=jsonb_set(payload,'{history}',$4::jsonb)
+ WHERE event_id=$1 AND model_id=$2 AND policy_version=$3`, j.EventID, j.ModelID, j.PolicyVersion, snapshot)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return snapshot, tx.Commit(ctx)
+}
+
+func temporalPredecessors(ctx context.Context, tx pgx.Tx, w contract.Window) (json.RawMessage, error) {
+	const step = int64(5 * time.Second)
+	const limit = 5 // The sixth window is the observation being scored.
+	start, err := strconv.ParseInt(w.WindowStartNS, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	// Read original observations, including rule matches and quality failures, regardless
+	// of which worker has already completed their jobs. One extra row detects an
+	// ambiguous oldest slot (two different event IDs at the same time).
+	rows, err := tx.Query(ctx, `SELECT window_start_ns,window_end_ns,payload FROM feature_windows
+ WHERE sensor_id=$1 AND window_end_ns>$2 AND window_end_ns<=$3 AND payload->>'capture_epoch'=$4
+ AND payload->>'entity_type'=$5 AND payload->>'entity_id'=$6 AND payload->>'feature_set_version'=$7
+ ORDER BY window_end_ns DESC,event_id DESC LIMIT $8`, w.SensorID, start-limit*step, start,
+		w.CaptureEpoch, w.EntityType, w.EntityID, w.FeatureSetVersion, limit+1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type measurement struct {
+		start, end int64
+		payload    json.RawMessage
+	}
+	var prior []measurement
+	for rows.Next() {
+		var previous measurement
+		if err := rows.Scan(&previous.start, &previous.end, &previous.payload); err != nil {
+			return nil, err
+		}
+		prior = append(prior, previous)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	history := make([]json.RawMessage, 0, limit)
+	for i, previous := range prior {
+		if len(history) == limit || previous.end != start || previous.start != start-step ||
+			(i+1 < len(prior) && prior[i+1].end > previous.start) {
+			break
+		}
+		history = append(history, previous.payload)
+		start = previous.start
+	}
+	slices.Reverse(history)
+	return json.Marshal(history)
 }
 
 // RecordCatalog binds the rule decision and the final ML result to the same leased job.

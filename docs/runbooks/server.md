@@ -1,12 +1,45 @@
 # PostgreSQL ingestion and inference worker
 
+## Пилот на одном сервере Linux
+
+Потребуются Git, Docker Engine с Compose v2, Python 3, OpenSSL с опцией `-addext` и Make. Выполняйте команды из корня репозитория на машине, где виден входящий и исходящий трафик защищаемого адреса. Для примера ниже взяты интерфейс `eth0` и адрес `192.0.2.10`. Подставьте реальные значения из `ip -br addr`.
+
+```sh
+PILOT="$HOME/.netwatch-pilot"
+python3 scripts/init_pilot.py "$PILOT" --interface eth0 --host 192.0.2.10
+make work WORK_ENV="$PILOT/work.env"
+docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml cp api:/usr/local/bin/netwatch "$PILOT/netwatch"
+chmod u+x "$PILOT/netwatch"
+export NETWATCH_URL=https://127.0.0.1:8443
+export NETWATCH_CA_FILE="$PILOT/tls/cert.pem"
+export NETWATCH_OPERATOR_TOKEN_FILE="$PILOT/operator.token"
+"$PILOT/netwatch"
+```
+
+Инициализация создаёт новый закрытый каталог с паролем базы, операторским токеном и самоподписанным сертификатом на год для loopback. Сервисы обращаются к пороговой модели из `deploy/models/temporal-r5`. Идентификатор модели — `v1-temporal-a721ab9def3befdc68c8d3c5`, порог — `0,9978790881906234`. ML при загрузке сверяет контрольные суммы базового RF, временного детектора и их весов.
+
+В меню **Сенсоры → Добавить сенсор** задайте имя и скопируйте одноразовый код. Выйдите из меню. Выполните регистрацию один раз, вставив код в скрытое приглашение, и запустите сенсор.
+
+```sh
+docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml run --rm --build sensor-v1 \
+  enroll --endpoint grpcs://127.0.0.1:8444 --identity /state/sensor.json --ca-file /run/netwatch/ca.pem
+docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml up -d sensor-v1
+"$PILOT/netwatch" doctor --json --max-age 30s
+"$PILOT/netwatch" status --json
+"$PILOT/netwatch" incidents --since 1h
+```
+
+После появления первых полных пятисекундных окон `doctor` должен вернуть код 0. Проверьте модель, время последнего окна, результаты обработки и очередь в `status`. Для проверки работы сенсора достаточно обычной активности на защищаемом адресе. Правила, базовый RF и временной этап обрабатывают один поток наблюдений. Временной этап использует до шести последовательных окон одного хоста и помечает дополнительную аномалию как `unknown`. Неполное покрытие, неизвестные или ненулевые потери исключают окно из оценки. Результаты сравнения на записях приведены в [отчёте](../../benchmarks/v1-temporal-threshold.md).
+
+Идентичность сенсора и неподтверждённые наблюдения сохраняются в томе `sensor_state`, решения — в PostgreSQL. Для следующего запуска используйте тот же `work.env` и команду `up -d sensor-v1`. Порты управления по умолчанию доступны на loopback этого сервера.
+
 ## Серверный запуск
 
 Скопируйте [шаблон](../../deploy/work.env.example) в `.env.work` и задайте права `0600`. Укажите TLS-сертификат, ключ, данные PostgreSQL, операторские токены и комплект модели. `NETWATCH_DATABASE_URL` использует хост `db` внутри Compose и имя базы из `NETWATCH_DB_NAME`. При отдельной роли мигратора укажите `NETWATCH_MIGRATION_DATABASE_URL`. Сертификаты и модель монтируются для чтения контейнерным пользователем 65532.
 
 Шаблон задаёт `COMPOSE_PROJECT_NAME=netwatch-v1`. Это имя выделяет отдельный том `netwatch-v1_pgdata`. Если локальный эксперимент уже применял другую миграцию 007, запустите v1 с отдельным именем проекта и томом. Проверка контрольной суммы остановит запуск на несовместимой схеме. Для параллельных стеков задайте разные `NETWATCH_API_PORT` и `NETWATCH_GRPC_PORT`.
 
-Для `traffic-v3` задайте `NETWATCH_MODEL_DIR` с полным каталогом утверждённого комплекта, `NETWATCH_V1_MODEL_BUNDLE` с путём внутри контейнера, например `/model/bundle.json`, `NETWATCH_V1_MODEL_SHA256` с хешем этого файла и `NETWATCH_MODEL_ID` с его идентификатором. Для прежнего профиля используйте переменные `NETWATCH_LEGACY_MODEL_BUNDLE`, `NETWATCH_MODEL_SHA256` и `NETWATCH_SERVICE_MODEL_ENTITIES`. Необязательная `NETWATCH_DISABLED_RULES` перечисляет отключённые правила через запятую.
+Шаблон уже настроен для поставляемого временного детектора. Для самостоятельного однооконного комплекта очистите `NETWATCH_V1_TEMPORAL_BUNDLE` и задайте `NETWATCH_MODEL_DIR` с полным каталогом утверждённого комплекта, `NETWATCH_V1_MODEL_BUNDLE` с путём внутри контейнера, например `/model/bundle.json`, `NETWATCH_V1_MODEL_SHA256` с хешем этого файла и `NETWATCH_MODEL_ID` с его идентификатором. Для прежнего профиля используйте переменные `NETWATCH_LEGACY_MODEL_BUNDLE`, `NETWATCH_MODEL_SHA256` и `NETWATCH_SERVICE_MODEL_ENTITIES`. Необязательная `NETWATCH_DISABLED_RULES` перечисляет отключённые правила через запятую.
 
 ```sh
 make work WORK_ENV=.env.work
@@ -92,7 +125,7 @@ CGO_ENABLED=1 go build -trimpath -o bin/netwatch-sensor ./cmd/netwatch-sensor
 ```sh
 netwatch-sensor enroll --endpoint grpcs://netwatch.example:8444 \
   --ca-file /etc/netwatch/ca.pem --identity /var/lib/netwatch/sensor.json
-netwatch-sensor live --interface eth0 --host 192.0.2.10 \
+netwatch-sensor live --interface eth0 --host 192.0.2.10 --filter 'host 192.0.2.10' \
   --spool /var/lib/netwatch/spool --endpoint grpcs://netwatch.example:8444 \
   --ca-file /etc/netwatch/ca.pem --identity /var/lib/netwatch/sensor.json
 ```

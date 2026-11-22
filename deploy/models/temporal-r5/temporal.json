@@ -1,0 +1,9 @@
+{
+  "base_sha256": "6e768f7714c058113221ec3af9eb5fb8b167ab53ab7809b3eafb2f393139f717",
+  "file": "rescue.pkl",
+  "horizon": 6,
+  "method": "boost",
+  "model_sha256": "2f18db12f5ed7f4a759230004b386fa01f4eb1940315652b6a270e0984df7298",
+  "schema": 1,
+  "threshold": 0.9978790881906234
+}

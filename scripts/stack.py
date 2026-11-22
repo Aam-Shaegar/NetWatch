@@ -46,8 +46,9 @@ def work(args):
             raise SystemExit("Set --database to a new database name using lowercase ASCII letters, digits, or underscore.")
         return restore(config, archive, args.database)
     if args.action == "logs" and args.follow:
-        return compose(config, "work.yaml", *commands["logs"], "--follow")
-    return compose(config, "work.yaml", *commands[args.action])
+        return compose(config, "work.yaml", "--profile", "*", *commands["logs"], "--follow")
+    profiles = () if args.action == "start" else ("--profile", "*")
+    return compose(config, "work.yaml", *profiles, *commands[args.action])
 
 
 def database_command(config, *args, **streams):
@@ -144,7 +145,7 @@ def check():
         "NETWATCH_MODEL_SHA256": "0" * 64,
         "NETWATCH_SERVICE_MODEL_ENTITIES": "TCP/192.0.2.10:443",
     }
-    if compose(None, "work.yaml", "--profile", "sensor", "--profile", "probe", "config", "--quiet", env=dict(os.environ, **example)):
+    if compose(None, "work.yaml", "--profile", "sensor", "--profile", "sensor-v1", "--profile", "probe", "config", "--quiet", env=dict(os.environ, **example)):
         return 1
     trainer = {"NETWATCH_DATASET_DIR": "/var/lib/netwatch/dataset",
                "NETWATCH_TRAIN_MODULE": "profiled", "NETWATCH_TRAIN_INPUT": "/dataset/manifest.json",

@@ -24,6 +24,8 @@ const (
 	HistoryAge   = 5 * time.Minute
 )
 
+const TemporalModelID = "v1-temporal-a721ab9def3befdc68c8d3c5"
+
 type Decision struct {
 	EventID         string  `json:"event_id"`
 	Status          string  `json:"status"`

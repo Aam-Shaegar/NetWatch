@@ -52,7 +52,16 @@ func (w *Worker) processCatalog(ctx context.Context, j store.Job) error {
 		cancel()
 	}
 
-	decision, details, inferErr := w.inferCatalog(ctx, j)
+	var history json.RawMessage
+	if j.ModelID == catalog.TemporalModelID {
+		read, cancel := context.WithTimeout(ctx, 5*time.Second)
+		history, err = w.Store.CatalogTemporalHistory(read, j, window)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	decision, details, inferErr := w.inferCatalog(ctx, j, history)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -73,7 +82,7 @@ func (w *Worker) processCatalog(ctx context.Context, j store.Job) error {
 	return nil
 }
 
-func (w *Worker) inferCatalog(ctx context.Context, j store.Job) (catalog.Decision, json.RawMessage, error) {
+func (w *Worker) inferCatalog(ctx context.Context, j store.Job, history json.RawMessage) (catalog.Decision, json.RawMessage, error) {
 	bad := func(reason string) (catalog.Decision, json.RawMessage, error) {
 		return catalog.Decision{}, nil, fmt.Errorf("%s", reason)
 	}
@@ -81,7 +90,8 @@ func (w *Worker) inferCatalog(ctx context.Context, j store.Job) (catalog.Decisio
 		SchemaVersion int             `json:"schema_version"`
 		ModelID       string          `json:"model_id"`
 		Window        json.RawMessage `json:"window"`
-	}{1, j.ModelID, j.Window})
+		History       json.RawMessage `json:"history,omitempty"`
+	}{1, j.ModelID, j.Window, history})
 	if err != nil {
 		return bad("invalid_catalog_request")
 	}

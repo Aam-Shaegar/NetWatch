@@ -120,6 +120,7 @@ services:
       NETWATCH_MODEL_SHA256: ${NETWATCH_MODEL_SHA256:-}
       NETWATCH_V1_MODEL_BUNDLE: ${NETWATCH_V1_MODEL_BUNDLE:-}
       NETWATCH_V1_MODEL_SHA256: ${NETWATCH_V1_MODEL_SHA256:-}
+      NETWATCH_V1_TEMPORAL_BUNDLE: ${NETWATCH_V1_TEMPORAL_BUNDLE:-}
       NETWATCH_FEATURE_SET_VERSION: ${NETWATCH_CAPTURE_FEATURE_SET:-traffic-v1}
       NETWATCH_POLICY_VERSION: ${NETWATCH_POLICY_VERSION:-v1}
       NETWATCH_SERVICE_MODEL_ENTITIES: ${NETWATCH_SERVICE_MODEL_ENTITIES:-}
@@ -140,6 +141,52 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+    restart: unless-stopped
+    stop_grace_period: 15s
+    logging: *logging
+
+  sensor-v1:
+    profiles: [sensor-v1]
+    image: ${NETWATCH_SENSOR_IMAGE:-netwatch-sensor:local}
+    build:
+      context: ..
+      dockerfile: deploy/sensor/Dockerfile
+    network_mode: host
+    depends_on:
+      api: {condition: service_healthy}
+    command:
+      - live
+      - --interface
+      - "${NETWATCH_CAPTURE_INTERFACE:-}"
+      - --host
+      - "${NETWATCH_CAPTURE_HOST:-}"
+      - --filter
+      - "host ${NETWATCH_CAPTURE_HOST:-}"
+      - --feature-set
+      - traffic-v3
+      - --capture-buffer-mib
+      - "${NETWATCH_CAPTURE_BUFFER_MIB:-16}"
+      - --lateness
+      - "${NETWATCH_CAPTURE_LATENESS:-1s}"
+      - --spool
+      - /state/spool
+      - --identity
+      - /state/sensor.json
+      - --endpoint
+      - "grpcs://127.0.0.1:${NETWATCH_GRPC_PORT:-8444}"
+      - --ca-file
+      - /run/netwatch/ca.pem
+    volumes:
+      - sensor_state:/state
+      - type: bind
+        source: ${NETWATCH_SENSOR_CA_FILE:-${NETWATCH_TLS_DIR}/cert.pem}
+        target: /run/netwatch/ca.pem
+        read_only: true
+        bind: {create_host_path: false}
+    cap_drop: [ALL]
+    cap_add: [NET_RAW]
+    security_opt: [no-new-privileges:true]
+    read_only: true
     restart: unless-stopped
     stop_grace_period: 15s
     logging: *logging
@@ -212,3 +259,4 @@ networks:
 volumes:
   pgdata:
   spool:
+  sensor_state:
