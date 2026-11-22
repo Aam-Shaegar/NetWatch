@@ -70,20 +70,21 @@ Live and replay use the same decoder, flow tracker and five-second window
 engine. When a read times out, `Advance` uses the system clock minus configured
 lateness to close pending windows even during silence. Capture timestamps and
 the system clock must be in the same clock domain; large clock adjustments or
-processing delays can produce late packets, marked as gaps. Empty windows are
-not synthesized. The first and unflushed shutdown boundary windows are partial.
-Only fully elapsed windows observed since capture start can become complete.
+processing delays can produce late packets. During uninterrupted live capture the
+sensor emits a window with zero traffic for each fully observed idle interval.
+Windows that straddle capture startup or shutdown can be partial.
 
-JSON diagnostics go to stderr: `live_started`, periodic `capture_stats`, and
-`live_stopped` with decoded/status counts and cumulative late-packet/drop counts.
-The counters are those reported by libpcap: `received` is OS-dependent and need
-not equal decoded records; `dropped` indicates capture-buffer loss;
-`interface_dropped` is the driver-reported counter (not supported by every
-interface). Zero is not a proof of end-to-end network visibility. Every exported
-live window includes cumulative `capture_dropped`; after observed capture or
-interface drops, subsequent windows conservatively have `coverage: gap` until a
-new capture epoch. Earlier emitted windows cannot be revised. Offline replay
-cannot infer kernel drops and leaves that counter unavailable.
+The sensor writes `live_started`, periodic `capture_stats` and `live_stopped`
+to stderr. The libpcap counters in these logs are cumulative. Their meaning
+depends on the interface and OS. In particular, `interface_dropped` is available
+only on drivers that report it.
+
+For each live window, `quality.capture_dropped` records the capture-buffer drops
+reported during overlapping poll intervals. If either the capture-buffer or
+interface drop counter rises, the sensor marks the affected windows as gaps.
+Later intervals can become complete again. During replay, pass verified coverage
+bounds and the measured `--capture-dropped` count when available. An omitted
+count remains unknown.
 
 On a capture/statistics/write error the process exits unsuccessfully, retains
 already written output for diagnosis and marks any remaining exported windows

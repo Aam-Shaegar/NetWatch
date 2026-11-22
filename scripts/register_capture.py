@@ -1,15 +1,63 @@
-"""Register a local raw capture without pretending it has verified training labels."""
-import argparse, hashlib, json
+"""Record the provenance and checksum of a local capture."""
+
+import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument("capture",type=Path);p.add_argument("--source",required=True);p.add_argument("--run-id",required=True);p.add_argument("--output",type=Path,required=True)
-a=p.parse_args()
-if a.capture.resolve()==a.output.resolve():p.error("output must differ from capture")
-if a.output.exists():p.error("manifest already exists")
-h=hashlib.sha256()
-with a.capture.open("rb") as f:
-    magic=f.read(4);f.seek(0)
-    if magic not in [bytes.fromhex(x) for x in ['d4c3b2a1','a1b2c3d4','4d3cb2a1','a1b23c4d','0a0d0d0a']]:p.error("not a recognized PCAP/PCAPNG header")
-    for block in iter(lambda:f.read(1024*1024),b''):h.update(block)
-a.output.parent.mkdir(parents=True,exist_ok=True)
-a.output.write_text(json.dumps(dict(schema_version=1,run_id=a.run_id,source=a.source,file_name=a.capture.name,bytes=a.capture.stat().st_size,sha256=h.hexdigest(),labels_status="not_verified",training_ready=False),indent=2)+'\n')
-print(a.output)
+from tempfile import NamedTemporaryFile
+
+
+# PCAP supports both byte orders and both timestamp resolutions.
+CAPTURE_HEADERS = {
+    bytes.fromhex(header)
+    for header in ("d4c3b2a1", "a1b2c3d4", "4d3cb2a1", "a1b23c4d", "0a0d0d0a")
+}
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("capture", type=Path)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+
+    if args.capture.resolve() == args.output.resolve():
+        parser.error("output must differ from capture")
+    if args.output.exists():
+        parser.error("manifest already exists")
+
+    with args.capture.open("rb") as capture:
+        header = capture.read(4)
+        if header not in CAPTURE_HEADERS:
+            parser.error("not a recognized PCAP/PCAPNG header")
+        digest = hashlib.sha256(header)
+        size = len(header)
+        for block in iter(lambda: capture.read(1024 * 1024), b""):
+            digest.update(block)
+            size += len(block)
+
+    manifest = {
+        "schema_version": 1,
+        "run_id": args.run_id,
+        "source": args.source,
+        "file_name": args.capture.name,
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+        "labels_status": "not_verified",
+        "training_ready": False,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(mode="w", dir=args.output.parent) as temporary:
+        temporary.write(json.dumps(manifest, indent=2) + "\n")
+        temporary.flush()
+        try:
+            os.link(temporary.name, args.output)
+        except FileExistsError:
+            parser.error("manifest already exists")
+    print(args.output)
+
+
+if __name__ == "__main__":
+    main()

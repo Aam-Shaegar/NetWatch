@@ -2,26 +2,7 @@
 
 ## Пилот на одном сервере Linux
 
-Запустите `./netwatch` из клона. Для команды `netwatch` из любого каталога один раз создайте ссылку из каталога в `PATH`, например `sudo ln -s "$PWD/netwatch" /usr/local/bin/netwatch`. Анализатор и сенсор запускайте от обычного пользователя с доступом к Docker. Нужны Docker Engine с Compose v2, Python 3 и OpenSSL с опцией `-addext`. При первой сборке Docker потребуются образы и зависимости из сети.
-
-```sh
-netwatch
-```
-
-Первый запуск создаёт закрытый каталог `~/.netwatch-pilot` с паролем PostgreSQL, операторским токеном, сертификатом для localhost и конфигурацией Compose. Повторный запуск использует существующую конфигурацию. Переменная `NETWATCH_PILOT_DIR` задаёт другой каталог. Сервер использует `deploy/models/temporal-r5` с порогом `0,9978790881906234`. Выход из меню оставляет сервисы запущенными.
-
-В меню **Сенсоры → Добавить сенсор** задайте имя и получите одноразовый код. На этом же сервере в отдельном терминале выполните:
-
-```sh
-netwatch sensor init
-netwatch doctor --json --max-age 30s
-```
-
-Сенсор запросит сетевой интерфейс, наблюдаемый IP и код регистрации. Для явного выбора используйте, например, `netwatch sensor init --interface eth0 --host 192.0.2.10`, подставив значения из `ip -br addr`. Регистрация выполняется через gRPC с TLS, код вводится через stdin. Идентичность остаётся в томе `sensor_state`. Последующие запуски используют `netwatch sensor start`. Состояние и инциденты доступны через `netwatch status --json` и `netwatch incidents --since 1h`.
-
-После появления первых полных пятисекундных окон `doctor` должен вернуть код 0. Проверьте модель, время последнего окна, результаты обработки и очередь в `status`. Для проверки работы сенсора достаточно обычной активности на защищаемом адресе. Правила, базовый RF и временной этап обрабатывают один поток наблюдений. Временной этап использует до шести последовательных окон одного хоста и помечает дополнительную аномалию как `unknown`. Неполное покрытие, неизвестные или ненулевые потери исключают окно из оценки. Результаты сравнения на записях приведены в [отчёте](../../benchmarks/v1-temporal-threshold.md).
-
-Идентичность сенсора и неподтверждённые наблюдения сохраняются в томе `sensor_state`, решения — в PostgreSQL. Для следующего запуска используйте тот же `work.env` и команду `up -d sensor-v1`. Порты управления по умолчанию доступны на loopback этого сервера.
+Для установки на одну машину начните с [руководства для Linux](linux.md#analyzer). В нём описаны первый запуск, регистрация [локального](linux.md#local-sensor) и [удалённого](linux.md#remote-sensor) сенсора, диагностика и остановка. Ниже приведены параметры для ручного развёртывания и подробности работы API и очереди.
 
 ## Серверный запуск
 
@@ -216,8 +197,7 @@ rollback drops application data: back up first, stop writers, execute the down S
 and delete its schema_migrations row in the same transaction. Production migration
 credentials should own DDL; runtime roles only need SELECT/INSERT/UPDATE on the
 application tables, DELETE on incident_queue, access to the identity sequences and SELECT on schema_migrations. See [incident review](incidents.md) for the operator role and migration 000002. Development Compose uses its
-single local role for convenience. Retention and backup/restore drills remain
-operational-hardening work, not guarantees supplied by an empty schema.
+single local role. For backup and restore commands, see the [database recovery procedure](#резервное-копирование-и-восстановление).
 
 ## API behavior and bounds
 
@@ -278,10 +258,6 @@ create a second prediction for the same identity. SIGTERM cancels HTTP and shuts
 down; an interrupted lease is left to expire. A database error after inference
 also leaves recovery to the lease. Jobs retry rather than silently disappearing;
 operators can inspect pending attempts/last_error in PostgreSQL.
-
-The current schema supports per-window inference. Multi-window history for GRU,
-model registry/activation, incidents, UI and load/retention acceptance are later
-milestones. This step verifies transport, persistence and recovery semantics.
 
 ### Permanent inference rejection
 
