@@ -1,0 +1,283 @@
+# NetWatch под Linux
+
+| Что нужно сделать | С чего начать |
+| --- | --- |
+| Наблюдать один сервер | [Анализатор](#analyzer), затем [локальный сенсор](#local-sensor) |
+| Собирать трафик на другом сервере | [Удалённый сенсор](#remote-sensor) |
+| Проверить работу по небольшому примеру из клона | [Тестовая выборка](#sample) и [чтение PCAP](#replay) |
+| Измерить качество на собственных записях | [Независимая выборка](#holdout) |
+| Сопровождать службу | [Контроль, остановка и резервная копия](#operate) |
+| Работать с компонентами по отдельности | [Разработка, лаборатория и дополнительные профили](#dev) |
+
+Анализатор принимает окна, применяет правила и модели и ведёт журнал. Сенсор наблюдает один выбранный IP на одном интерфейсе. Для живого пилота веса уже поставлены в `deploy/models/temporal-r5/`. Обучение ведётся отдельно, офлайн. Команды ниже рассчитаны на Bash. Команды `make`, сборки и примеры с относительными путями выполняйте из корня клона.
+
+<a id="analyzer"></a>
+## 1. Запустить анализатор на сервере
+
+1. Подготовьте обычную учётную запись с доступом к Docker Engine на Linux. Понадобятся Git, Python 3, OpenSSL с поддержкой `req -addext`, Docker с плагином Compose и доступ к реестрам образов и зависимостей при первой сборке. Для инструкций сопровождения пригодятся GNU Make и `ip` из iproute2. Проверьте из той же учётной записи:
+
+   ```sh
+   git --version
+   python3 --version
+   openssl req -help 2>&1 | grep -- -addext
+   docker info --format '{{.ServerVersion}}'
+   docker compose version
+   docker compose up --help | grep -- --wait-timeout
+   ```
+
+2. Откройте существующий клон нужной версии. Для новой установки из опубликованной версии:
+
+   ```sh
+   git clone --branch main https://github.com/Aam-Shaegar/NetWatch.git
+   cd NetWatch
+   git rev-parse --short HEAD
+   ./netwatch
+   ```
+
+   Команда `./netwatch` (также `./netwatch menu`) создаст `~/.netwatch-pilot/`, соберёт образы, поднимет PostgreSQL, применит миграции и дождётся готовности API, worker и ML. Затем откроется терминальное меню. Выход через **0** оставляет службы работающими. На Linux операторский клиент извлекается из образа API. Для этого сценария на хосте не нужны Go, Node.js и обучающие выборки.
+
+3. Чтобы команда работала из любого каталога, один раз выполните из постоянного места установки:
+
+   ```sh
+   sudo ln -s "$PWD/netwatch" /usr/local/bin/netwatch
+   command -v netwatch
+   netwatch status --json
+   ```
+
+   Если имя уже занято, проверьте `command -v netwatch` и `readlink -f /usr/local/bin/netwatch`. Из нужного клона всегда доступно `./netwatch`. Запускайте приложение от своего пользователя, чтобы каждый раз использовался тот же домашний каталог. Путь к состоянию можно заранее задать через `NETWATCH_PILOT_DIR`; используйте одно значение во всех терминалах. Конфигурация по умолчанию публикует операторский HTTPS на `127.0.0.1:8443`, gRPC сенсоров на `127.0.0.1:8444`. База и ML доступны внутри Compose.
+
+<a id="local-sensor"></a>
+## 2. Запустить сенсор на том же сервере
+
+1. В меню анализатора выберите **2. Сенсоры → 2. Добавить сенсор**, задайте понятное имя и получите одноразовый код. Оставьте меню открытым.
+2. Во втором терминале на этом сервере проверьте точное имя интерфейса и IP, трафик которого виден на нём. Учитывайте интерфейсы VPN, мостов и контейнеров. Отображаемый `ip` суффикс `@if…` у виртуального интерфейса обозначает связанный интерфейс. Для захвата нужно фактическое имя устройства.
+
+   ```sh
+   ip -br address
+   netwatch sensor init
+   ```
+
+   Ответьте на запросы интерфейса и **IP без маски**, затем введите код в скрытом приглашении. Можно указать оба параметра явно, например `netwatch sensor init --interface ens3 --host 192.0.2.10`, заменив **оба** значения. Команда регистрирует сенсор и сразу включает живой захват. Том `sensor_state` сохраняет его идентичность и очередь неподтверждённых наблюдений.
+
+3. Создайте обычную активность на наблюдаемом IP, например откройте уже работающий на нём сервис. После нескольких полных пятисекундных окон проверьте:
+
+   ```sh
+   netwatch status --json
+   netwatch doctor --json --max-age 30s
+   netwatch incidents --since 1h
+   ```
+
+   Сверьте идентификатор модели `v1-temporal-a721ab9def3befdc68c8d3c5`, свежесть окна, результат обработки и очередь. Нормальная активность может оставить журнал инцидентов пустым. `doctor` возвращает 0 при пригодном потоке, 2 при проблеме службы или данных и 1 при ошибке вызова. При подтверждённом непрерывном захвате сенсор также передаёт полные окна с нулевым трафиком; появление ненулевых счётчиков помогает проверить выбор интерфейса и IP. Начальное неполное окно, разрыв или неизвестные/ненулевые потери могут дать `insufficient_data`. Детектор учитывает до шести последовательных окон одного потока. Дополнительное обнаружение временной моделью получает тип `unknown`.
+
+4. После обычной остановки запустите `netwatch`, затем `netwatch sensor start`. Повторная регистрация не требуется. В меню **Сенсоры → Выбрать сенсор** можно приостановить наблюдение, возобновить его или отозвать доступ. Для временной паузы выбирайте приостановку.
+
+<a id="remote-sensor"></a>
+## 3. Анализатор и сенсор на разных Linux-машинах
+
+**На анализаторе.** Для двух машин удобно использовать частный доступ к уже запущенному loopback-пилоту через SSH. Тогда можно использовать исходный сертификат пилота с SAN `127.0.0.1`. Потребуются разрешённый вход по SSH и пересылка TCP на анализаторе. В меню создайте отдельный одноразовый код для этой машины. Передайте на сенсор только публичный `~/.netwatch-pilot/tls/cert.pem` по доверенному каналу. Пароль БД, операторский токен и `key.pem` остаются на анализаторе.
+
+**На машине захвата.** Следующие команды используют порт 18444 на loopback **сенсора**. В отдельном терминале держите туннель открытым всё время наблюдения. Замените имя входа и адрес анализатора. Если сервер использует нестандартный gRPC-порт, измените последнее число в `-L`.
+
+```sh
+ssh -NT -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+  -L 127.0.0.1:18444:127.0.0.1:8444 user@analyzer.example
+```
+
+Во втором терминале сенсора откройте клон той же версии. Установите Go из `go.mod` (для этой версии 1.26.11), C-компилятор, libpcap с заголовками и `setcap`. Например, для Debian/Ubuntu пакеты системных инструментов — `build-essential libpcap-dev libcap2-bin iproute2`. Соберите бинарник и предоставьте право открытия сокета захвата только группе оператора:
+
+```sh
+mkdir -p bin
+CGO_ENABLED=1 go build -trimpath -o bin/netwatch-sensor ./cmd/netwatch-sensor
+sudo install -o root -g "$(id -gn)" -m 0750 bin/netwatch-sensor /usr/local/bin/netwatch-sensor
+sudo setcap cap_net_raw=ep /usr/local/bin/netwatch-sensor
+install -d -m 700 "$HOME/.netwatch-sensor"
+scp user@analyzer.example:.netwatch-pilot/tls/cert.pem "$HOME/.netwatch-sensor/ca.pem"
+netwatch-sensor interfaces
+```
+
+Зарегистрируйте сенсор и запустите наблюдение в том же терминале. Замените `ens3` и IP реальными значениями:
+
+```sh
+state="$HOME/.netwatch-sensor"
+endpoint=grpcs://127.0.0.1:18444
+iface=ens3
+host_ip=192.0.2.10
+netwatch-sensor enroll --endpoint "$endpoint" --ca-file "$state/ca.pem" \
+  --identity "$state/sensor.json"
+netwatch-sensor live --interface "$iface" --host "$host_ip" --filter "host $host_ip" \
+  --feature-set traffic-v3 --spool "$state/spool" --endpoint "$endpoint" \
+  --ca-file "$state/ca.pem" --identity "$state/sensor.json"
+```
+
+Процесс `live` работает на переднем плане, Ctrl+C завершает его. Для следующего сеанса восстановите туннель и повторите только `live` с теми же путями и endpoint. При установке нового бинарника повторно назначьте capability. Для постоянной прямой связи через внутреннюю сеть укажите на анализаторе в `work.env` доступный `NETWATCH_GRPC_HOST`, выдайте сертификат на DNS-имя сервера, установите цепочку и ключ для API, примените `make work WORK_ENV=…` и разрешите gRPC с адресов сенсоров. В обоих вызовах сенсора с самого начала используйте один `grpcs://имя-сервера:порт` и его доверенный CA. Изменение endpoint уже зарегистрированной идентичности требует отдельного подключения. [Параметры TLS и служб](server.md)
+
+<a id="operate"></a>
+## 4. Состояние, журнал, остановка, копия
+
+Из корня клона укажите конфигурацию **именно своего запуска**. Для пилота:
+
+```sh
+cfg="${NETWATCH_PILOT_DIR:-$HOME/.netwatch-pilot}/work.env"
+make work-status WORK_ENV="$cfg"
+make work-logs WORK_ENV="$cfg"
+docker compose --env-file "$cfg" -f deploy/work.yaml logs --tail 80 sensor-v1
+netwatch incidents --since 1h --json
+```
+
+В меню **Статистика аномалий** видны типы, источник решения и последние инциденты. Веб-журнал доступен оператору по `https://127.0.0.1:8443/` на анализаторе, вход по токену из `operator.token`. Для удалённого рабочего места можно переслать этот HTTPS-порт по SSH, использовать имя из сертификата и доверенный публичный сертификат. Штатный CLI уже знает URL, токен и доверенный сертификат.
+
+| Симптом | Что проверить |
+| --- | --- |
+| Меню доступно, окон ещё нет | Список и состояние сенсоров, логи `sensor-v1`, интерфейс, адрес и обычный сетевой обмен на нём. |
+| Окна есть, прогноз запаздывает | Возраст получения и обработки в `status`, очередь, состояния `worker` и `ml`. При недоступности ML задания могут ждать повтора. |
+| Ошибка TLS или подключения | Проверить туннель/порт, SAN и срок сертификата, доверенный PEM и точный endpoint из регистрации. |
+| Не готова модель | Сверить модель в `work.env`, комплект из пяти файлов и логи ML. Образ проверяет идентификатор и контрольные суммы. |
+| Занят порт или база неожиданно содержит старые данные | Проверить `COMPOSE_PROJECT_NAME`, опубликованные порты и используемый env-файл. Для второго стека выделяют отдельное имя Compose и свободные порты до запуска. |
+
+Остановить только захват: `docker compose --env-file "$cfg" -f deploy/work.yaml stop sensor-v1`. Остановить весь пилот: `make work-stop WORK_ENV="$cfg"`. Оба действия сохраняют тома. Для возвращения в работу выполните шаги 1 и 2 без выдачи нового кода. Для резервного копирования работающей БД:
+
+```sh
+install -d -m 700 "$HOME/netwatch-backups"
+archive="$HOME/netwatch-backups/netwatch-$(date -u +%Y%m%dT%H%M%SZ).dump"
+python3 scripts/stack.py work backup --env "$cfg" --archive "$archive"
+```
+
+Архив охватывает PostgreSQL. Отдельно защищайте конфигурацию пилота, TLS и том сенсора. Восстановление в новую базу и переключение на неё описаны в [серверной инструкции](server.md#резервное-копирование-и-восстановление).
+
+<a id="sample"></a>
+## 5. Запустить на тестовой выборке из репозитория
+
+Это автономная проверка вычислений. Потребуются Python 3.12–3.14, GNU Make и ML-зависимости. Из корня клона:
+
+```sh
+python3 scripts/bootstrap_tools.py
+./scripts/uv sync --project ml --locked
+run_dir=$(mktemp -d)
+./scripts/uv run --project ml --locked pytest -q \
+  ml/tests/test_v1_evaluation.py::test_frozen_v1_comparison_and_serving \
+  ml/tests/test_v1_temporal.py --basetemp="$run_dir/pytest"
+```
+
+Первый тест строит размеченную числовую выборку с четырьмя частями, обучает кандидатов и проверяет ответы ML-сервиса. Тесты временного детектора отдельно проверяют поставляемые веса и обработку истории. Каталог `--basetemp` должен быть новым и выделенным только для pytest. В **том же терминале** запустите операторские команды на созданных данных:
+
+```sh
+sample=$(find "$run_dir/pytest" -type f -name fixture.jsonl -print -quit)
+test -f "$sample" && test -f "$(dirname "$sample")/models/index.json"
+export V1_TEST_DATA="$sample" V1_PIPELINE_DATA="$sample"
+export V1_MODELS="$(dirname "$sample")/models" V1_REPORT_DIR="$run_dir/reports"
+make test-find
+make test-classify
+make test-pipeline
+ls "$V1_REPORT_DIR"
+```
+
+Ожидаются `find.json`, `classify.json`, `pipeline.json`. По умолчанию первые две команды оценивают всех подходящих кандидатов, третья сравнивает правила и правила с выбранной на validation связкой. `make test-full` запускает тот же конвейер. Для одного кандидата, например, выполните `make test-find MODEL=random_forest`. Из этого же терминала можно открыть `./netwatch` → **3. Тестирование**. Пункты 1–3 запускают эти же три цели, пункт 4 сравнивает кандидатов обеих стадий. Само меню поднимает анализатор, прямые `make test-…` работают без Docker. Учебные числа подтверждают работу команд. Качество на чужом сервере измеряют на реальном независимом трафике.
+
+<a id="holdout"></a>
+## 6. Проверить на собственной размеченной выборке
+
+Откройте новый терминал. Нужны ML-окружение из шага 5, Go, libpcap, исходные PCAP/PCAPNG и независимая разметка. Полные исследовательские выборки не входят в клон. Сначала подготовьте два манифеста с реальными путями к записям: для разработки (`train`, `validation`) и для проверки (`test` для стадий, отдельный `pipeline` для всей цепочки). В манифесте указываются защищаемый IP, границы записи в наносекундах, источник меток и SHA-256 входов. Измеренные потери требуют подтверждения; `null` означает неизвестное качество. Связанные фрагменты одного захвата держите в одной группе. [Форматы CSV, поля манифеста и правила разбиения](v1-evaluation.md#manifest-and-reference-labels)
+
+```sh
+run_dir=$(mktemp -d)
+make v1-data V1_MANIFEST=/path/to/development/manifest.json V1_DATA="$run_dir/dev.jsonl"
+make v1-train V1_DATA="$run_dir/dev.jsonl" V1_MODELS="$run_dir/models"
+make v1-data V1_MANIFEST=/path/to/holdout/manifest.json V1_DATA="$run_dir/holdout.jsonl"
+export V1_TEST_DATA="$run_dir/holdout.jsonl" V1_PIPELINE_DATA="$run_dir/holdout.jsonl"
+export V1_MODELS="$run_dir/models" V1_REPORT_DIR="$run_dir/reports"
+make test-find test-classify test-pipeline
+```
+
+`v1-data` собирает Go-сенсор и каталог правил, читает записи и привязывает внешние метки к окнам. Обе выборки готовьте одной версией правил и бинарников. `v1-train` сохраняет кандидатов и `index.json` в свежий каталог. Серверный `deploy/models/temporal-r5` содержит утверждённый комплект для инференса; стандартная команда сравнения требует индекс кандидатов. Офлайн-`test-pipeline` использует однооконных кандидатов. Для поставляемого временного профиля используйте тесты шага 5 и живую проверку шагов 1–2. [Протокол сквозной проверки поставляемого профиля](../../benchmarks/v1-temporal-threshold.md)
+
+Читайте результаты с их знаменателями:
+
+- **Обнаружено**: для первой стадии матрица `[[TN, FP], [FN, TP]]` даёт `TP / (TP + FN)` обнаруженных и `FP / (FP + TN)` ложных срабатываний на штатных окнах. Здесь оцениваются пригодные размеченные окна, пропущенные правилами.
+- **Классифицировано верно**: смотрите число верных ответов и поддержку каждого типа в отчёте классификации, отдельно по всем подходящим атакам и по дошедшим через детектор. Ответ `unknown` сохраняется как отдельный исход.
+- **Конвейер**: сравните `results.rules` и `results.rules_ml`. В `episodes` есть `detected_episodes / positive_episodes`, `false_incidents`, `normal_hours` и `false_incidents_per_hour`. Одно событие может занимать несколько окон. Значение `null` при пустом знаменателе означает отсутствие оценки.
+
+<a id="replay"></a>
+## 7. Прочитать готовый PCAP или писать окна в файл
+
+Следующий пример читает два SYN-пакета из штатной фикстуры и выводит окно `traffic-v3`. Для чтения сохранённого файла права захвата не нужны.
+
+```sh
+mkdir -p bin
+go build -trimpath -o bin/netwatch-sensor ./cmd/netwatch-sensor
+out=$(mktemp -d)
+bin/netwatch-sensor replay --input tests/fixtures/pcap/syn-retry.pcap \
+  --host 198.51.100.20 --feature-set traffic-v3 --epoch guide --output "$out/windows.jsonl"
+wc -l "$out/windows.jsonl"
+bin/netwatch-sensor -validate window contracts/examples/window.valid.json
+```
+
+В файле одно окно. Короткая фикстура демонстрирует извлечение признаков. Для записи метаданных пакетов опустите `--host`, `--feature-set` и `--epoch`; укажите новый выходной файл. Для живого автономного сенсора с правом захвата из шага 3 используйте, подставив свой интерфейс и адрес:
+
+```sh
+out=$(mktemp -d)
+netwatch-sensor live --interface ens3 --host 192.0.2.10 --filter 'host 192.0.2.10' \
+  --feature-set traffic-v3 --duration 30s --output "$out/live.jsonl"
+```
+
+`live --output` и `replay --output` пишут на диск. Для отложенной доставки предусмотрены `enqueue --spool DIR --input WINDOWS.jsonl`, `spool-status --spool DIR` и `send --once --spool DIR --endpoint URL` у бинарника сенсора. Для gRPC передайте `send` также `--identity` и `--ca-file`; идентификатор источника в самих окнах должен совпадать с зарегистрированным сенсором. Используйте отдельную очередь для тестовых окон. [Захват и качество](live.md) · [Формат очереди и подтверждения](delivery.md)
+
+<a id="dev"></a>
+## 8. Разработка, лаборатория и дополнительные профили
+
+Для полного окружения нужны Go 1.26.11, Python 3.12–3.14, Node.js 22.12+ с npm, Docker Compose, Make, C-компилятор, заголовки libpcap и tcpdump. В отдельном рабочем клоне:
+
+```sh
+make bootstrap
+make doctor
+make test build compose-check
+```
+
+| Режим | Как запустить и где смотреть результат |
+| --- | --- |
+| Анализатор Compose без меню | Из подготовленного пилота `make work WORK_ENV="$HOME/.netwatch-pilot/work.env"`. Для ручной установки конфигурация создаётся из `deploy/work.env.example` с правами 0600, действительными TLS, токенами, БД и путями модели. [Поля и примеры](server.md#серверный-запуск) |
+| Только операторский клиент | `make cli`, задать `NETWATCH_URL`, `NETWATCH_CA_FILE`, `NETWATCH_OPERATOR_TOKEN_FILE`, затем `bin/netwatch menu`. Это клиент уже запущенного анализатора. Для меню тестов с другой рабочей директории задайте `NETWATCH_PROJECT_DIR`. [Пример](server.md#диагностика-из-терминала) |
+| Компоненты по отдельности | `make db-up`, загрузить окружение БД и модели, `make migrate`. Затем из отдельных терминалов с тем же окружением выполнить `make ml`, `make api`, `make worker`. Адреса разработки: БД 54329, ML 8000, HTTP API 8080 на loopback. Для v1 укажите локальные пути к `bundle.json` и `temporal.json` в `NETWATCH_V1_MODEL_BUNDLE`, `NETWATCH_V1_TEMPORAL_BUNDLE`, ID и SHA из `deploy/work.env.example`, а воркеру — `NETWATCH_V1_ML_ENDPOINT=http://127.0.0.1:8000/v1/detect`. Остановка процессов через Ctrl+C, БД — `make db-down`. [Строка подключения, токены и порядок запуска](server.md#local-startup) |
+| Веб-интерфейс разработчика | `make web` запускает Vite и выводит адрес. Чтобы пользоваться журналом через сам API, соберите `cd web && npm run build`, задайте API `NETWATCH_WEB_DIR` с абсолютным путём к `web/dist` и операторские токены. [Вход и настройка журнала](incidents.md) |
+| Лаборатория и интеграционные проверки | `make lab-up` запускает цель и регистратор в Docker, `make lab-down` останавливает. `make lab-smoke` проверяет лабораторию, `make live-smoke` сравнивает живой захват с PCAP, `make server-smoke` проверяет доставку и восстановление с отдельной БД, `make spool-disk-smoke` проверяет очередь при заполнении диска. [Живой тест](live.md) |
+| Датасеты и модели прежних профилей | `make collection-smoke` проверяет сбор и экспорт. `make collect`, `make dataset`, `make train` / `train-local`, `make compare` используют собственные входы. [Сбор данных](data.md) · [Обучение](detector.md) · [Прогноз](forecast-results.md) |
+| Нагрузочные и приёмочные проверки | `make bench` измеряет сборку окон; `make operations ARTIFACT=…`, `make test-e2e E2E_ARTIFACT=…`, `make test-acceptance` и `make test-anomalies` используют подготовленные комплекты и манифесты соответствующего эксперимента. [Условия запуска](operations.md) · [Приёмка](../../benchmarks/detection-acceptance.md) · [Независимые наблюдения](../../benchmarks/independent.md) |
+| Совместимость и наблюдения за сервисом | Профиль Compose `sensor` использует HTTPS/JSON, отдельный сервисный фильтр и статический токен. Профиль `probe` выполняет однократную проверку доступности заданного сервиса. Для первого заполните `NETWATCH_CAPTURE_*`, endpoint и токен и используйте `docker compose --env-file "$cfg" -f deploy/work.yaml up -d sensor`; для второго заполните `NETWATCH_PROBE_*` и используйте `docker compose --env-file "$cfg" -f deploy/work.yaml run --rm probe`. [Профили и параметры](server.md#серверный-запуск) · [Назначение наблюдений](../passive-observations.md) |
+
+### Пример запуска API, worker и ML непосредственно на хосте
+
+Для отладки v1 на отдельной машине разработки подготовьте зависимости через `make bootstrap`. Пример использует отдельную конфигурацию TLS, локальную БД разработки и свободные порты 18080 (HTTPS), 18444 (gRPC), 8000 (ML) и 54329 (БД). Запускайте из Bash в корне проекта. Каждый новый каталог `dev` содержит отдельный токен; сохраните напечатанный путь, если продолжите тот же сеанс.
+
+```sh
+make db-up
+dev=$(mktemp -d)
+python3 scripts/init_pilot.py "$dev/pilot"
+set -a
+. ./.env
+set +a
+export NETWATCH_DATABASE_URL="$(python3 -c 'import os, urllib.parse; print("postgres://netwatch:" + urllib.parse.quote(os.environ["NETWATCH_DB_PASSWORD"], safe="") + "@127.0.0.1:54329/netwatch?sslmode=disable")')"
+export NETWATCH_OPERATOR_TOKEN_FILE="$dev/pilot/operator.token"
+export NETWATCH_OPERATOR_TOKENS="$(python3 -c 'import json, os, pathlib; print(json.dumps({"operator": pathlib.Path(os.environ["NETWATCH_OPERATOR_TOKEN_FILE"]).read_text().strip()}))')"
+export NETWATCH_TLS_CERT="$dev/pilot/tls/cert.pem" NETWATCH_TLS_KEY="$dev/pilot/tls/key.pem"
+export NETWATCH_LISTEN=127.0.0.1:18080 NETWATCH_GRPC_LISTEN=127.0.0.1:18444
+export NETWATCH_ML_ENDPOINT=http://127.0.0.1:8000/v1/predict
+export NETWATCH_V1_ML_ENDPOINT=http://127.0.0.1:8000/v1/detect
+export NETWATCH_POLICY_VERSION=v1
+export NETWATCH_MODEL_ID="$(sed -n 's/^NETWATCH_MODEL_ID=//p' deploy/work.env.example)"
+export NETWATCH_V1_MODEL_SHA256="$(sed -n 's/^NETWATCH_V1_MODEL_SHA256=//p' deploy/work.env.example)"
+export NETWATCH_V1_MODEL_BUNDLE="$PWD/deploy/models/temporal-r5/bundle.json"
+export NETWATCH_V1_TEMPORAL_BUNDLE="$PWD/deploy/models/temporal-r5/temporal.json"
+make migrate && make -j3 api worker ml
+```
+
+Во втором терминале из того же клона подставьте фактический путь `dev`, выведенный при подготовке пилота (родитель каталога `pilot`):
+
+```sh
+dev=/path/to/temp-directory
+make cli
+export NETWATCH_URL=https://127.0.0.1:18080
+export NETWATCH_CA_FILE="$dev/pilot/tls/cert.pem"
+export NETWATCH_OPERATOR_TOKEN_FILE="$dev/pilot/operator.token"
+bin/netwatch menu
+```
+
+Для такого API регистрация и живой запуск нативного сенсора выполняются как в шаге 3, напрямую по `grpcs://127.0.0.1:18444` на той же машине, с публичным сертификатом этого сеанса. Для остановки нажмите Ctrl+C в терминале с тремя процессами и выполните `make db-down`.
