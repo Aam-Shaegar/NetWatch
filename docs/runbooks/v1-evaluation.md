@@ -2,6 +2,17 @@
 
 NetWatch extracts `traffic-v3` host windows from saved PCAP/PCAPNG with `netwatch-sensor replay`. The same Go rules used by the analyzer supply the route for each window. Models fit only on rule misses from eligible windows. A held-out family calibrates the refusal threshold and stays out of the training data. Final use of `Unknown` is measured on different held-out families.
 
+## Что проверять перед серверным пилотом
+
+| Проверка | Как запустить и интерпретировать результат |
+| --- | --- |
+| Контракты, правила, ML и временная модель | После `make bootstrap` выполните `make test`. В ML-тестах загружаются поставляемые веса, проверяются порог, границы истории и решения при потерях. |
+| Worker и восстановление после сбоев | `make server-smoke` запускает интеграционные Go-тесты с отдельной PostgreSQL. В их числе повтор обработки при недоступности ML и поздняя доставка предыдущего окна. |
+| Живой сенсор | `make live-smoke` сверяет признаки захвата с повторным чтением PCAP на Linux-стенде. После регистрации на целевой машине дождитесь первого полного окна и выполните `netwatch doctor --json --max-age 30s`. |
+| Сравнение исследовательских кандидатов | `make test-find`, `make test-classify` и `make test-pipeline` используют подготовленные вами данные и каталог кандидатов из `make v1-train`. Такой каталог содержит индекс сравнения. Серверу для инференса достаточно пяти файлов из `deploy/models/temporal-r5`. |
+
+Для временного детектора отдельно сверяли решения работающего приложения с эталоном по каждому окну, проверяли дубликаты доставки и перезапуск живого сенсора. Результаты приведены по размеченным атакам, штатным записям и проверкам качества. [Отчёт о пороге и сквозной проверке](../../benchmarks/v1-temporal-threshold.md)
+
 ## Data and artifact commands
 
 ```sh

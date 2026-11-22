@@ -7,6 +7,12 @@ web/dist/
 .env
 .env.*
 !.env.example
+
+# Generated single-server pilot configuration and credentials
+.netwatch-pilot/
+work.env
+operator.token
+key.pem
 outputs/
 data/raw/
 data/processed/

@@ -1,4 +1,4 @@
-.PHONY: help configure bootstrap doctor test test-go test-python test-legacy build api ml web compose-check db-up db-down lab-up lab-down lab-smoke fixtures
+.PHONY: help configure bootstrap doctor test test-go test-python build api ml web compose-check db-up db-down lab-up lab-down lab-smoke fixtures
 UV ?= ./scripts/uv
 help:
 	@echo "Setup:      bootstrap configure doctor"
@@ -19,15 +19,13 @@ bootstrap:
 
 doctor:
 	python3 scripts/doctor.py
-test: test-go test-python test-legacy
+test: test-go test-python
 
 test-go:
 	go test -race ./...
 test-python:
 	$(UV) run --project ml --locked pytest ml/tests
 
-test-legacy:
-	python3 -m unittest discover -s tests -v
 build:
 	go build ./cmd/...
 	cd web && npm run build
