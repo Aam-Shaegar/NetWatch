@@ -40,3 +40,17 @@ Use [Gotham TCP scanning](https://zenodo.org/records/14502760) only where the pu
 Each stage needs labeled examples from eligible rule misses. The split cannot repeat capture groups or bytes. Choose development and final test groups by original environment or run before selecting thresholds. Compile development and holdout with the same sensor binary, rules binary and `NETWATCH_DISABLED_RULES` setting. Coverage gaps and an unknown dropped-packet count stay unscored. Check coverage before planning a trial on public captures, which often omit loss evidence.
 
 Stage 1 compares gradient boosting, Random Forest, logistic regression, MLP, and Isolation Forest. Stage 2 compares the four supervised classifiers. Isolation Forest's scalar anomaly score does not supply a multiclass posterior. Default threshold-search budgets are tunable with `V1_MAX_FPR` and `V1_MAX_UNKNOWN_ACCEPTANCE` before final evaluation. Neither default is a measured or approved release target.
+
+## Source-held-out research training
+
+The optional research trainer compares four detectors and eight classifiers across five publisher-disjoint folds. It fits on eligible Go rule misses. Source and episode weighting limit the influence of a single long capture. Named Unknown examples calibrate rejection. Use independent captures for the final paired test. The round-three outcome and operating limits are in the [model comparison](../../benchmarks/v1-source-held-out.md).
+
+From the repository root with the locked ML dependencies installed, run:
+
+```sh
+PYTHONPATH=ml python -m netwatch_ml.v1.research data/processed/v1/development.jsonl artifacts/grouped-v1
+```
+
+Supply a prepared v1 dataset or newline-delimited development observations with trusted Go routes, capture and publisher identifiers, split, label, episode and family where applicable. Assign related publishers or aliases the same `validation_source`. Use a fresh output directory. The result contains a deployable `bundle.json`, its two estimator files and `research-index.json` with the thresholds, folds, scores and input digest. The standard candidate-comparison commands use the index from the standard trainer.
+
+Quality checks are strict by default. For historical observations routed separately under the diagnostic archive policy, `--allow-archive-unknown-loss` admits complete windows with an unknown drop count and all other quality checks satisfied. This option applies only to research input. The live service retains its measured-loss requirement.
