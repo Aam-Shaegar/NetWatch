@@ -16,10 +16,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path, help="new private directory for credentials and work.env")
-    parser.add_argument("--host", type=ipaddress.ip_address, required=True, help="protected host address")
-    parser.add_argument("--interface", required=True, help="Linux interface carrying that host's traffic")
+    parser.add_argument("--host", type=ipaddress.ip_address, help="protected host address")
+    parser.add_argument("--interface", help="Linux interface carrying that host's traffic")
     args = parser.parse_args()
-    if not re.fullmatch(r"[\w.:@-]+", args.interface, flags=re.ASCII):
+    if (args.host is None) != (args.interface is None):
+        parser.error("set --host and --interface together")
+    if args.interface is not None and not re.fullmatch(r"[\w.:@-]+", args.interface, flags=re.ASCII):
         parser.error("invalid interface name")
     dest = args.directory.expanduser().resolve()
     if any(c in str(dest) for c in "\r\n"):
@@ -52,8 +54,8 @@ def main():
             "NETWATCH_DB_PASSWORD": password,
             "NETWATCH_DATABASE_URL": f"postgres://netwatch:{password}@db/netwatch?sslmode=disable",
             "NETWATCH_OPERATOR_TOKENS": "'" + json.dumps({"operator": operator}) + "'",
-            "NETWATCH_CAPTURE_HOST": str(args.host),
-            "NETWATCH_CAPTURE_INTERFACE": args.interface,
+            "NETWATCH_CAPTURE_HOST": str(args.host) if args.host else "",
+            "NETWATCH_CAPTURE_INTERFACE": args.interface or "",
         }
         for key, value in settings.items():
             template, count = re.subn(rf"^{key}=$", lambda _: f"{key}={value}", template, flags=re.MULTILINE)

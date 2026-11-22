@@ -2,32 +2,22 @@
 
 ## Пилот на одном сервере Linux
 
-Потребуются Git, Docker Engine с Compose v2, Python 3, OpenSSL с опцией `-addext` и Make. Выполняйте команды из корня репозитория на машине, где виден входящий и исходящий трафик защищаемого адреса. Для примера ниже взяты интерфейс `eth0` и адрес `192.0.2.10`. Подставьте реальные значения из `ip -br addr`.
+Запустите `./netwatch` из клона. Для команды `netwatch` из любого каталога один раз создайте ссылку из каталога в `PATH`, например `sudo ln -s "$PWD/netwatch" /usr/local/bin/netwatch`. Анализатор и сенсор запускайте от обычного пользователя с доступом к Docker. Нужны Docker Engine с Compose v2, Python 3 и OpenSSL с опцией `-addext`. При первой сборке Docker потребуются образы и зависимости из сети.
 
 ```sh
-PILOT="$HOME/.netwatch-pilot"
-python3 scripts/init_pilot.py "$PILOT" --interface eth0 --host 192.0.2.10
-make work WORK_ENV="$PILOT/work.env"
-docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml cp api:/usr/local/bin/netwatch "$PILOT/netwatch"
-chmod u+x "$PILOT/netwatch"
-export NETWATCH_URL=https://127.0.0.1:8443
-export NETWATCH_CA_FILE="$PILOT/tls/cert.pem"
-export NETWATCH_OPERATOR_TOKEN_FILE="$PILOT/operator.token"
-"$PILOT/netwatch"
+netwatch
 ```
 
-Инициализация создаёт новый закрытый каталог с паролем базы, операторским токеном и самоподписанным сертификатом на год для loopback. Сервисы обращаются к пороговой модели из `deploy/models/temporal-r5`. Идентификатор модели — `v1-temporal-a721ab9def3befdc68c8d3c5`, порог — `0,9978790881906234`. ML при загрузке сверяет контрольные суммы базового RF, временного детектора и их весов.
+Первый запуск создаёт закрытый каталог `~/.netwatch-pilot` с паролем PostgreSQL, операторским токеном, сертификатом для localhost и конфигурацией Compose. Повторный запуск использует существующую конфигурацию. Переменная `NETWATCH_PILOT_DIR` задаёт другой каталог. Сервер использует `deploy/models/temporal-r5` с порогом `0,9978790881906234`. Выход из меню оставляет сервисы запущенными.
 
-В меню **Сенсоры → Добавить сенсор** задайте имя и скопируйте одноразовый код. Выйдите из меню. Выполните регистрацию один раз, вставив код в скрытое приглашение, и запустите сенсор.
+В меню **Сенсоры → Добавить сенсор** задайте имя и получите одноразовый код. На этом же сервере в отдельном терминале выполните:
 
 ```sh
-docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml run --rm --build sensor-v1 \
-  enroll --endpoint grpcs://127.0.0.1:8444 --identity /state/sensor.json --ca-file /run/netwatch/ca.pem
-docker compose --env-file "$PILOT/work.env" -f deploy/work.yaml up -d sensor-v1
-"$PILOT/netwatch" doctor --json --max-age 30s
-"$PILOT/netwatch" status --json
-"$PILOT/netwatch" incidents --since 1h
+netwatch sensor init
+netwatch doctor --json --max-age 30s
 ```
+
+Сенсор запросит сетевой интерфейс, наблюдаемый IP и код регистрации. Для явного выбора используйте, например, `netwatch sensor init --interface eth0 --host 192.0.2.10`, подставив значения из `ip -br addr`. Регистрация выполняется через gRPC с TLS, код вводится через stdin. Идентичность остаётся в томе `sensor_state`. Последующие запуски используют `netwatch sensor start`. Состояние и инциденты доступны через `netwatch status --json` и `netwatch incidents --since 1h`.
 
 После появления первых полных пятисекундных окон `doctor` должен вернуть код 0. Проверьте модель, время последнего окна, результаты обработки и очередь в `status`. Для проверки работы сенсора достаточно обычной активности на защищаемом адресе. Правила, базовый RF и временной этап обрабатывают один поток наблюдений. Временной этап использует до шести последовательных окон одного хоста и помечает дополнительную аномалию как `unknown`. Неполное покрытие, неизвестные или ненулевые потери исключают окно из оценки. Результаты сравнения на записях приведены в [отчёте](../../benchmarks/v1-temporal-threshold.md).
 

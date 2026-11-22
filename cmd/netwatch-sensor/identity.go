@@ -132,7 +132,9 @@ func identityCommand(ctx context.Context, command string, args []string) error {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	path := fs.String("identity", "", "private sensor identity file")
 	var endpoint, ca *string
+	var ifNeeded bool
 	if command == "enroll" {
+		fs.BoolVar(&ifNeeded, "if-needed", false, "reuse an existing registration for this endpoint")
 		endpoint = fs.String("endpoint", "", "gRPC TLS endpoint (grpcs://host:port)")
 		ca = fs.String("ca-file", "", "optional CA PEM file")
 	}
@@ -191,6 +193,10 @@ func identityCommand(ctx context.Context, command string, args []string) error {
 	case identity.Endpoint != *endpoint:
 		return fmt.Errorf("endpoint differs from the stored sensor identity")
 	case identity.ID != "":
+		if ifNeeded {
+			fmt.Fprintln(os.Stdout, identity.ID)
+			return nil
+		}
 		return fmt.Errorf("sensor is already enrolled")
 	default:
 		// Recover a completed registration when the original reply was lost.

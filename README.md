@@ -6,17 +6,17 @@ NetWatch наблюдает сетевой трафик выбранного х�
 
 ## Запуск на одном сервере Linux
 
-Нужны Git, Docker Engine с Compose v2, Make, Python 3 и OpenSSL с поддержкой `-addext`. Определите интерфейс и защищаемый IP командой `ip -br addr`. Подставьте их вместо примера ниже.
+Для одного Linux-сервера нужны Git, Docker Engine с Compose v2, Python 3 и OpenSSL. При первом запуске анализатор создаёт локальные настройки и TLS-сертификат, запускает сервер и открывает терминальное меню.
 
 ```sh
-git clone --branch main --single-branch https://github.com/Aam-Shaegar/NetWatch.git
+git clone https://github.com/Aam-Shaegar/NetWatch.git
 cd NetWatch
-PILOT="$HOME/.netwatch-pilot"
-python3 scripts/init_pilot.py "$PILOT" --interface eth0 --host 192.0.2.10
-make work WORK_ENV="$PILOT/work.env"
+./netwatch
 ```
 
-Эти команды запускают анализатор и базу. Чтобы начался захват, зарегистрируйте сенсор через терминальное меню, запустите контейнер `sensor-v1` и проверьте поступление первых полных окон командой `netwatch doctor`. Одноразовый код вводится в приглашении сенсора. [Команды регистрации, запуска и проверки](docs/runbooks/server.md#пилот-на-одном-сервере-linux)
+Чтобы вызывать команду из любого каталога, один раз добавьте ссылку в каталог из `PATH`. На обычном Linux-сервере для этого подойдёт `sudo ln -s "$PWD/netwatch" /usr/local/bin/netwatch`. После этого запускайте анализатор командой `netwatch` от обычного пользователя с доступом к Docker.
+
+**Сенсор подключается отдельно.** В меню анализатора выберите **Сенсоры → Добавить сенсор** и получите одноразовый код. На том же сервере выполните `netwatch sensor init` (или `./netwatch sensor init` из клона). Укажите интерфейс и IP из `ip -br addr`, затем введите код в скрытом приглашении. После первых полных окон выполните `netwatch doctor --json`. Для повторного запуска уже зарегистрированного сенсора используйте `netwatch sensor start`. [Инструкция для сервера и удалённых сенсоров](docs/runbooks/server.md)
 
 ## Проверки
 

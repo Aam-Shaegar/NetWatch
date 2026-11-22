@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Start a local NetWatch pilot or operate its separately enrolled sensor."""
+import argparse
+import fcntl
+import ipaddress
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = Path(__file__).resolve().parent
+PILOT = Path(os.environ.get("NETWATCH_PILOT_DIR", "~/.netwatch-pilot")).expanduser().resolve()
+CONFIG = PILOT / "work.env"
+COMPOSE = ["docker", "compose", "--env-file", str(CONFIG), "-f", str(ROOT / "deploy/work.yaml")]
+
+
+def run(command, **kwargs):
+    return subprocess.run(command, cwd=ROOT, check=True, **kwargs)
+
+
+def port(internal):
+    binding = run([*COMPOSE, "port", "api", str(internal)], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return int(binding.stdout.strip().splitlines()[0].rsplit(":", 1)[-1])
+
+
+def setup():
+    if not CONFIG.exists():
+        run([sys.executable, ROOT / "scripts/init_pilot.py", PILOT])
+
+
+def start_analyzer():
+    # Build once per checkout revision. On subsequent starts reuse the built images.
+    revision = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True)
+    stamp = PILOT / "launcher-version"
+    version = revision.stdout.strip()
+    current = revision.returncode == 0 and stamp.exists() and stamp.read_text() == version
+    args = ["up", "-d", "--wait", "--wait-timeout", "120"]
+    if not current:
+        args += ["--build"]
+    run([*COMPOSE, *args, "migrate", "api", "worker", "ml"])
+    client = PILOT / "operator-cli"
+    if not current or not client.is_file():
+        with tempfile.TemporaryDirectory(dir=PILOT) as tmp:
+            binary = Path(tmp) / "operator-cli"
+            if sys.platform.startswith("linux"):
+                run([*COMPOSE, "cp", "api:/usr/local/bin/netwatch", binary])
+            else:
+                run(["go", "build", "-trimpath", "-o", binary, "./cmd/netwatch"])
+            binary.chmod(0o700)
+            binary.replace(client)
+        stamp.write_text(version)
+
+
+def sensor(args):
+    settings = CONFIG.read_text()
+    def configured(key):
+        match = re.search(rf"^{key}=(.*)$", settings, re.MULTILINE)
+        if not match:
+            raise ValueError(f"В {CONFIG} отсутствует {key}")
+        return match.group(1)
+
+    iface_key, host_key = "NETWATCH_CAPTURE_INTERFACE", "NETWATCH_CAPTURE_HOST"
+    iface, host = configured(iface_key), configured(host_key)
+    if args.action == "init":
+        iface = args.interface or iface or input("Сетевой интерфейс (см. ip -br addr): ").strip()
+        if not re.fullmatch(r"[\w.:@-]+", iface, re.ASCII):
+            raise ValueError("Некорректное имя интерфейса")
+        host = str(ipaddress.ip_address(args.host or host or input("IP защищаемого хоста: ").strip()))
+        run([*COMPOSE, "build", "sensor-v1"], stdin=subprocess.DEVNULL)
+        interactive = sys.stdin.isatty()
+        tty = [] if interactive else ["-T"]
+        # readline also preserves input buffered while prompting for the address and interface.
+        code = None if interactive else sys.stdin.readline(80)
+        run([*COMPOSE, "run", "--no-deps", "--rm", *tty, "sensor-v1", "enroll", "--if-needed",
+             "--endpoint", f"grpcs://127.0.0.1:{port(8444)}", "--identity", "/state/sensor.json",
+             "--ca-file", "/run/netwatch/ca.pem"], input=code, text=True)
+        for key, value in [(iface_key, iface), (host_key, host)]:
+            settings = re.sub(rf"^{key}=.*$", lambda _: f"{key}={value}", settings, flags=re.MULTILINE)
+        with tempfile.TemporaryDirectory(dir=PILOT) as tmp:
+            new = Path(tmp) / "work.env"
+            new.write_text(settings)
+            new.chmod(0o600)
+            new.replace(CONFIG)
+    elif not (iface and host):
+        raise ValueError("Сначала выполните netwatch sensor init")
+    run([*COMPOSE, "up", "-d", "--no-deps", "sensor-v1"])
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Запуск анализатора NetWatch и управление локальным сенсором.")
+    parser.add_argument("command", nargs="?", default="menu",
+                        choices=["menu", "sensor", "status", "doctor", "incidents"])
+    options = parser.parse_args(sys.argv[1:2])
+    rest = sys.argv[2:]
+    sensor_args = None
+    if options.command == "sensor":
+        sp = argparse.ArgumentParser(prog="netwatch sensor")
+        sub = sp.add_subparsers(dest="action", required=True)
+        init = sub.add_parser("init", help="зарегистрировать и запустить сенсор")
+        init.add_argument("--interface")
+        init.add_argument("--host", type=ipaddress.ip_address)
+        sub.add_parser("start", help="запустить ранее настроенный сенсор")
+        sensor_args = sp.parse_args(rest)
+    if options.command != "menu" and not CONFIG.is_file():
+        parser.error("Сначала запустите анализатор командой netwatch")
+    PILOT.parent.mkdir(parents=True, exist_ok=True)
+    # The menu must remain accessible while sensor enrollment waits for its code.
+    role = "sensor" if sensor_args is not None else "analyzer"
+    with (PILOT.parent / f".{PILOT.name}.{role}.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if options.command == "menu":
+            setup()
+            start_analyzer()
+        if sensor_args is not None:
+            sensor(sensor_args)
+            return
+    client = PILOT / "operator-cli"
+    if not client.is_file():
+        parser.error("Запустите netwatch для подготовки операторского клиента")
+    env = dict(os.environ, NETWATCH_CA_FILE=str(PILOT / "tls/cert.pem"),
+               NETWATCH_OPERATOR_TOKEN_FILE=str(PILOT / "operator.token"),
+               NETWATCH_URL=f"https://127.0.0.1:{port(8443)}", NETWATCH_PROJECT_DIR=str(ROOT))
+    os.execve(client, [str(client), options.command, *rest], env)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        sys.exit(error.returncode or 1)
+    except (OSError, ValueError, EOFError, IndexError) as error:
+        sys.exit(f"netwatch: {error}")
