@@ -201,7 +201,7 @@ func identityCommand(ctx context.Context, command string, args []string) error {
 	default:
 		// Recover a completed registration when the original reply was lost.
 		call, cancel := context.WithTimeout(ctx, 5*time.Second)
-		response, contactErr := client.Contact(call, identity.Token, nil)
+		response, contactErr := client.Contact(call, identity.Token, nil, nil)
 		cancel()
 		if contactErr == nil {
 			identity.ID = response.GetSensorId()
@@ -254,6 +254,7 @@ func superviseCapture(ctx context.Context, options deliveryOptions, identity sen
 	defer client.Close()
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
+	var resources resourceSampler
 	remoteState := "active"
 	var stop context.CancelFunc
 	var done chan error
@@ -279,7 +280,7 @@ func superviseCapture(ctx context.Context, options deliveryOptions, identity sen
 			return markerErr
 		}
 		call, cancel := context.WithTimeout(ctx, 2*time.Second)
-		state, contactErr := client.Contact(call, identity.Token, nil)
+		state, contactErr := client.Contact(call, identity.Token, nil, resources.sample(time.Now()))
 		cancel()
 		if contactErr == nil {
 			if state.GetSensorId() != identity.ID {

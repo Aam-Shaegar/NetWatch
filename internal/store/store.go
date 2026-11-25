@@ -80,7 +80,20 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
-var migrationFiles = []string{"000001_pipeline.up.sql", "000002_incidents.up.sql", "000003_security.up.sql", "000004_assessment_jobs.up.sql", "000005_incident_interruption.up.sql", "000006_pipeline_status.up.sql", "000007_sensors.up.sql", "000008_catalog.up.sql"}
+var migrationFiles = []string{
+	"000001_pipeline.up.sql",
+	"000002_incidents.up.sql",
+	"000003_security.up.sql",
+	"000004_assessment_jobs.up.sql",
+	"000005_incident_interruption.up.sql",
+	"000006_pipeline_status.up.sql",
+	"000007_sensors.up.sql",
+	"000008_catalog.up.sql",
+	"000009_pilots.up.sql",
+	"000010_sensor_resources.up.sql",
+	"000011_pilot_labels.up.sql",
+	"000012_pilot_health.up.sql",
+}
 
 func (s *Store) Ready(ctx context.Context) error {
 	for i, file := range migrationFiles {

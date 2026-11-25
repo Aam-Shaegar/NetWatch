@@ -28,12 +28,18 @@ func incidentRoutes(mux *http.ServeMux, c Config) {
 				sendJSON(w, 401, map[string]string{"error": "operator_required"})
 				return
 			}
-			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			timeout := 5 * time.Second
+			if r.Pattern == pilotReportRoute {
+				timeout = pilotReportTimeout
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + 5*time.Second))
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 			next(w, r.WithContext(ctx), actor)
 		}
 	}
 	catalogRoutes(mux, c, protect)
+	pilotRoutes(mux, c, protect)
 	failure := func(w http.ResponseWriter, err error) {
 		if errors.Is(err, pgx.ErrNoRows) {
 			sendJSON(w, 404, map[string]string{"error": "not_found"})

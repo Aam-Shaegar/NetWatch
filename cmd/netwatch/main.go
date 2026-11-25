@@ -124,24 +124,9 @@ func (c *operatorClient) request(ctx context.Context, method, path string, query
 	return nil
 }
 
-func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	usage := func() { fmt.Fprintln(stderr, "Usage: netwatch [menu|status|doctor|incidents] [options]") }
-	action := "menu"
-	if len(args) > 0 {
-		action, args = args[0], args[1:]
-	}
-	switch action {
-	case "-h", "--help", "help":
-		usage()
-		return 0, nil
-	case "menu", "status", "doctor", "incidents":
-	default:
-		usage()
-		return 1, fmt.Errorf("unknown command %q", action)
-	}
+func operatorFlags(action string, stderr io.Writer, o *options) *flag.FlagSet {
 	fs := flag.NewFlagSet(action, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	o := options{}
 	endpoint := os.Getenv("NETWATCH_URL")
 	if endpoint == "" {
 		endpoint = defaultEndpoint
@@ -150,6 +135,28 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs.StringVar(&o.caFile, "ca", os.Getenv("NETWATCH_CA_FILE"), "trusted PEM CA file")
 	fs.StringVar(&o.tokenFile, "token-file", os.Getenv("NETWATCH_OPERATOR_TOKEN_FILE"), "file containing the operator token")
 	fs.BoolVar(&o.machine, "json", false, "write JSON to stdout")
+	return fs
+}
+
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	usage := func() { fmt.Fprintln(stderr, "Usage: netwatch [menu|status|doctor|incidents|pilot] [options]") }
+	action := "menu"
+	if len(args) > 0 {
+		action, args = args[0], args[1:]
+	}
+	switch action {
+	case "-h", "--help", "help":
+		usage()
+		return 0, nil
+	case "pilot":
+		return runPilot(ctx, args, stdout, stderr)
+	case "menu", "status", "doctor", "incidents":
+	default:
+		usage()
+		return 1, fmt.Errorf("unknown command %q", action)
+	}
+	o := options{}
+	fs := operatorFlags(action, stderr, &o)
 	var maxAge, since time.Duration
 	var entity, model string
 	var before int64

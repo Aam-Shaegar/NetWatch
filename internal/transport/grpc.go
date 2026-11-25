@@ -66,9 +66,9 @@ func authorization(ctx context.Context, credential string) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+credential)
 }
 
-func (c *GRPCClient) Contact(ctx context.Context, credential string, loss *spool.Loss) (*wire.ContactResponse, error) {
+func (c *GRPCClient) Contact(ctx context.Context, credential string, loss *spool.Loss, resources *wire.ProcessResources) (*wire.ContactResponse, error) {
 	response, err := c.service.Contact(authorization(ctx, credential), &wire.ContactRequest{
-		SchemaVersion: SensorProtocolVersion, QueueLoss: lossToWire(loss),
+		SchemaVersion: SensorProtocolVersion, QueueLoss: lossToWire(loss), Resources: resources,
 	})
 	if err == nil && (response.GetSchemaVersion() != SensorProtocolVersion || response.GetSensorId() == "" ||
 		(response.GetState() != "active" && response.GetState() != "paused")) {

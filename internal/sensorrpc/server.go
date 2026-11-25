@@ -106,6 +106,14 @@ func (s *service) Contact(ctx context.Context, req *wire.ContactRequest) (*wire.
 	if err != nil {
 		return nil, s.transportError(err)
 	}
+	if sample := req.GetResources(); sample != nil {
+		sampleCtx, stop := context.WithTimeout(ctx, 250*time.Millisecond)
+		err := s.db.SaveSensorResources(sampleCtx, record.ID, sample.GetCpuPct(), sample.GetRssBytes())
+		stop()
+		if err != nil {
+			s.log.Warn("sensor_resource_sample_unavailable", "sensor_id", record.ID)
+		}
+	}
 	return &wire.ContactResponse{SchemaVersion: transport.SensorProtocolVersion, SensorId: record.ID, State: record.State}, nil
 }
 

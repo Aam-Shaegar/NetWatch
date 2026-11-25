@@ -34,7 +34,7 @@ def main(window_path=None, model_config=None, journal=None, experiment=None):
         port = address['NetworkSettings']['Ports']['5432/tcp'][0]['HostPort']
         env['NETWATCH_TEST_DATABASE_URL'] = f'postgres://postgres:{password}@127.0.0.1:{port}/netwatch_test?sslmode=disable'
         if window_path is None and experiment is None:
-            run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline'], timeout=240)
+            run(['go', 'test', '-race', '-count=1', '-timeout', '180s', '-v', './internal/pipeline', './internal/sensorrpc'], timeout=240)
         return native_smoke(root, name, env, run, window_path, model_config, journal, experiment)
     finally:
         subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True, timeout=30)

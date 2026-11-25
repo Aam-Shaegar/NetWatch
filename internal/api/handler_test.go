@@ -29,6 +29,9 @@ func TestJournalRoleBoundary(t *testing.T) {
 		want                int
 	}{
 		{"GET", "/v1/incidents", "", 401}, {"GET", "/v1/incidents", sensor, 401}, {"POST", "/v1/incidents/1/ack", sensor, 401},
+		{"POST", "/v1/pilots/campus/start", sensor, 401}, {"GET", "/v1/pilots/campus/report", sensor, 401},
+		{"POST", "/v1/pilots/campus/labels", "", 401}, {"POST", "/v1/pilots/campus/labels", sensor, 401},
+		{"POST", "/v1/pilots/invalid@name/start", operator, 400}, {"GET", "/v1/pilots/invalid@name/report", operator, 400},
 		{"GET", "/v1/windows/example", operator, 401}, {"GET", "/v1/incidents?from=3&until=2", operator, 400}, {"GET", "/v1/incidents/no-id", operator, 400},
 	} {
 		r := httptest.NewRequest(tc.method, tc.path, nil)

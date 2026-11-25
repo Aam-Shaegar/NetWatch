@@ -91,7 +91,7 @@ def sensor(args):
 def main():
     parser = argparse.ArgumentParser(description="Запуск анализатора NetWatch и управление локальным сенсором.")
     parser.add_argument("command", nargs="?", default="menu",
-                        choices=["menu", "sensor", "status", "doctor", "incidents"])
+                        choices=["menu", "sensor", "status", "doctor", "incidents", "pilot"])
     options = parser.parse_args(sys.argv[1:2])
     rest = sys.argv[2:]
     sensor_args = None

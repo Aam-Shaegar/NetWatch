@@ -168,7 +168,7 @@ func (s *Sender) Run(ctx context.Context, once bool) error {
 			if s.grpc != nil && (once || time.Since(lastContact) >= 2*time.Second) {
 				heartbeatContext, cancel := context.WithTimeout(ctx, s.config.Timeout)
 				loss := s.queue.Stats().Loss
-				_, contactErr := s.grpc.Contact(heartbeatContext, s.config.Token, &loss)
+				_, contactErr := s.grpc.Contact(heartbeatContext, s.config.Token, &loss, nil)
 				cancel()
 				lastContact = time.Now()
 				if contactErr != nil {

@@ -138,6 +138,25 @@ func run(log *slog.Logger) error {
 		go func() { grpcDone <- grpcServer.Serve(grpcListener) }()
 		log.Info("sensor_grpc_listening", "address", grpcAddress)
 	}
+	sampleCtx, stopSampling := context.WithCancel(ctx)
+	defer stopSampling()
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			sample, cancel := context.WithTimeout(sampleCtx, 5*time.Second)
+			err := db.SamplePilotHealth(sample)
+			cancel()
+			if err != nil && sampleCtx.Err() == nil {
+				log.Warn("pilot_health_sample_failed")
+			}
+			select {
+			case <-sampleCtx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	done := make(chan error, 1)
 	go func() {
 		if srv.TLSConfig != nil {

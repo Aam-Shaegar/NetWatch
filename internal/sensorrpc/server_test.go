@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/url"
 	"os"
 	"strconv"
@@ -74,6 +75,53 @@ func TestEnrollmentAndDeliveryLifecycle(t *testing.T) {
 	}
 
 	authed := metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+credential))
+	t.Run("resource samples are optional and scoped to authenticated pilots", func(t *testing.T) {
+		sample := &wire.ProcessResources{CpuPct: 12.5, RssBytes: 1 << 20}
+		req := &wire.ContactRequest{SchemaVersion: 1, Resources: sample}
+		checkCount := func(want int) {
+			t.Helper()
+			var count int
+			if err := db.Pool.QueryRow(ctx, "SELECT count(*) FROM sensor_resource_samples").Scan(&count); err != nil || count != want {
+				t.Fatalf("resource sample count %d, want %d: %v", count, want, err)
+			}
+		}
+		if _, err := service.Contact(authed, req); err != nil {
+			t.Fatal(err)
+		}
+		checkCount(0)
+		if _, err := db.StartPilot(ctx, "campus", "test", "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.Contact(ctx, req); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("unauthenticated resource sample: %v", err)
+		}
+		sample.CpuPct = math.NaN()
+		if _, err := service.Contact(authed, req); err != nil {
+			t.Fatalf("invalid optional metrics interrupted contact: %v", err)
+		}
+		checkCount(0)
+		sample.CpuPct = 12.5
+		for i := 0; i < 3; i++ {
+			if _, err := service.Contact(authed, req); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var total, buckets, matching int
+		err := db.Pool.QueryRow(ctx, `SELECT count(*),count(DISTINCT date_trunc('minute',sampled_at)),
+			count(*) FILTER (WHERE sensor_id=$1 AND cpu_pct=12.5 AND rss_bytes=1048576)
+			FROM sensor_resource_samples`, invite.ID).Scan(&total, &buckets, &matching)
+		if err != nil || total == 0 || total != buckets || total != matching {
+			t.Fatalf("unexpected resource samples: total=%d buckets=%d matching=%d: %v", total, buckets, matching, err)
+		}
+		// Even if the optional telemetry store fails, the control heartbeat
+		// must return the state so a live capture can continue.
+		if _, err := db.Pool.Exec(ctx, "ALTER TABLE sensor_resource_samples RENAME TO unavailable_samples"); err != nil {
+			t.Fatal(err)
+		}
+		if contact, err := service.Contact(authed, req); err != nil || contact.GetState() != "active" {
+			t.Fatalf("resource storage failure interrupted control heartbeat: %v", err)
+		}
+	})
 	raw, err := os.ReadFile("../../contracts/examples/window.valid.json")
 	if err != nil {
 		t.Fatal(err)

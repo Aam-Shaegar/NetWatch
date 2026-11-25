@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: NetWatch ingestion and incident API
-  version: 0.4.0
+  version: 0.5.0
 paths:
   /health/live:
     get:
@@ -198,6 +198,67 @@ paths:
                   projection_gaps: {type: integer, minimum: 0}
         '401': {description: Invalid operator credentials}
         '503': {description: Storage unavailable}
+  /v1/pilots/{name}/start:
+    parameters:
+      - {$ref: '#/components/parameters/pilotName'}
+    post:
+      summary: Start a seven-day pilot with the active model and policy
+      description: Reusing the name returns the original observation period and model.
+      security: [{operatorToken: []}]
+      responses:
+        '200':
+          description: Pilot observation period
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotPeriod'}
+        '400': {description: Invalid pilot name}
+        '401': {description: Operator credentials required}
+        '503': {description: Storage unavailable}
+  /v1/pilots/{name}/report:
+    parameters:
+      - {$ref: '#/components/parameters/pilotName'}
+    get:
+      summary: Read the pilot report, including registered sensors that sent no observations
+      description: >-
+        Metrics cover elapsed observation time up to the earlier of database time and the end
+        of the pilot. Later arrivals and reference labels may update a completed period's report.
+      security: [{operatorToken: []}]
+      responses:
+        '200':
+          description: Per-sensor statistics and analyzer measurements
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotReport'}
+        '400': {description: Invalid pilot name}
+        '401': {description: Operator credentials required}
+        '404': {description: Pilot not found}
+        '503': {description: Storage unavailable or report deadline exceeded}
+  /v1/pilots/{name}/labels:
+    parameters:
+      - {$ref: '#/components/parameters/pilotName'}
+    post:
+      summary: Register an independently labeled interval for one sensor
+      description: >-
+        The half-open interval must fall within elapsed pilot time after sensor registration and before any revocation.
+        Intervals for a given sensor and pilot cannot overlap. An identical retry succeeds.
+        Maximum request size is 4096 bytes.
+      security: [{operatorToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PilotLabel'}
+      responses:
+        '200':
+          description: Accepted reference interval
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PilotLabel'}
+        '400': {description: Invalid pilot request}
+        '401': {description: Operator credentials required}
+        '404': {description: Pilot or sensor not found}
+        '409': {description: Reused event ID with different content or overlapping interval}
+        '503': {description: Storage unavailable}
   /v1/incidents:
     get:
       summary: List incidents in descending ID order
@@ -278,8 +339,95 @@ paths:
         '503': {description: Storage unavailable}
 components:
   parameters:
+    pilotName: {in: path, name: name, required: true, schema: {$ref: '#/components/schemas/PilotName'}}
     incidentID: {in: path, name: id, required: true, schema: {type: integer, minimum: 1}}
   schemas:
+    PilotName:
+      type: string
+      pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'
+    PilotPeriod:
+      type: object
+      required: [name, started_at, ends_at, model_id, policy_version]
+      properties:
+        name: {$ref: '#/components/schemas/PilotName'}
+        started_at: {type: string, format: date-time}
+        ends_at: {type: string, format: date-time, description: Exactly 168 hours after start}
+        model_id: {type: string}
+        policy_version: {type: string}
+    PilotLabel:
+      type: object
+      additionalProperties: false
+      required: [id, sensor_id, start, end, type]
+      properties:
+        id: {$ref: '#/components/schemas/PilotName'}
+        sensor_id: {type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'}
+        start: {type: string, format: date-time, description: Inclusive with at most microsecond precision}
+        end: {type: string, format: date-time, description: Exclusive with at most microsecond precision}
+        type: {enum: [normal, tcp_port_scan, udp_flood, icmp_flood, unknown]}
+    PilotReport:
+      allOf:
+        - {$ref: '#/components/schemas/PilotPeriod'}
+        - type: object
+          required: [as_of, complete, sensors, analyzer]
+          properties:
+            as_of: {type: string, format: date-time, description: Upper bound for observation time}
+            complete: {type: boolean, description: Whether the seven-day observation period has elapsed}
+            sensors:
+              type: array
+              items: {$ref: '#/components/schemas/PilotSensorReport'}
+            analyzer:
+              type: object
+              required: [samples, peak_queue, database_growth_bytes]
+              properties:
+                samples: {type: integer, minimum: 0}
+                peak_queue: {type: [integer, 'null'], minimum: 0}
+                database_growth_bytes: {type: [integer, 'null'], description: Signed change in database size}
+    PilotSensorReport:
+      type: object
+      required: [sensor_id, expected_slots, received_slots, usable_slots, received_windows,
+        insufficient_windows, unresolved_windows, alert_windows, incidents, by_type, by_source,
+        coverage_pct, p95_delay_s, resource_samples, mean_cpu_pct, peak_rss_bytes, reference]
+      properties:
+        sensor_id: {type: string}
+        expected_slots: {type: integer, minimum: 0, description: Full aligned five-second intervals between enrollment or pilot start and revocation or report cutoff}
+        received_slots: {type: integer, minimum: 0, description: Distinct intervals observed}
+        usable_slots: {type: integer, minimum: 0, description: Distinct intervals with a normal or incident decision}
+        received_windows: {type: integer, minimum: 0, description: Window count across capture epochs}
+        insufficient_windows: {type: integer, minimum: 0}
+        unresolved_windows: {type: integer, minimum: 0}
+        alert_windows: {type: integer, minimum: 0}
+        incidents: {type: integer, minimum: 0, description: Distinct incidents linked to the selected windows}
+        by_type: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        by_source: {type: object, additionalProperties: {type: integer, minimum: 0}}
+        coverage_pct: {type: [number, 'null'], minimum: 0, maximum: 100, description: Usable slots as a percentage of expected slots}
+        p95_delay_s: {type: [number, 'null'], description: 95th percentile from window end to usable decision}
+        resource_samples: {type: integer, minimum: 0}
+        mean_cpu_pct: {type: [number, 'null'], minimum: 0}
+        peak_rss_bytes: {type: [integer, 'null'], minimum: 0}
+        reference:
+          description: Metrics for completed independently labeled intervals, or null if none exist.
+          oneOf:
+            - {$ref: '#/components/schemas/PilotReference'}
+            - {type: 'null'}
+    PilotReference:
+      type: object
+      required: [attack_episodes, detected_episodes, correctly_typed_episodes, by_type, normal_slots, false_incidents, false_per_100h]
+      properties:
+        attack_episodes: {type: integer, minimum: 0}
+        detected_episodes: {type: integer, minimum: 0}
+        correctly_typed_episodes: {type: integer, minimum: 0}
+        by_type:
+          type: object
+          additionalProperties:
+            type: object
+            required: [total, detected, correct]
+            properties:
+              total: {type: integer, minimum: 0}
+              detected: {type: integer, minimum: 0}
+              correct: {type: integer, minimum: 0}
+        normal_slots: {type: integer, minimum: 0, description: Distinct usable five-second slots fully inside a normal reference interval}
+        false_incidents: {type: integer, minimum: 0, description: Distinct incidents contained in a normal reference interval}
+        false_per_100h: {type: [number, 'null'], minimum: 0, description: False incidents per 100 usable normal host-hours}
     Incident:
       type: object
       required: [id, sensor, epoch, entity_type, entity, model, policy, first_ns, detected_ns, detected_at, last_ns, closed_ns, ack_at, ack_by]

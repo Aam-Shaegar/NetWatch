@@ -19,6 +19,14 @@ message EnrollRequest {
 message ContactRequest {
   uint32 schema_version = 1;
   QueueLoss queue_loss = 2;
+  ProcessResources resources = 3;
+}
+
+message ProcessResources {
+  // Process CPU usage over the sample interval. One fully busy core is 100%.
+  double cpu_pct = 1;
+  // Current resident process memory, in bytes.
+  int64 rss_bytes = 2;
 }
 
 message ContactResponse {
